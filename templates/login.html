@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+
+{% block title %}Login{% endblock title %}
+
+{% block content %}
+<h1>{{ self.title() }}</h1>
+
+<p>Please choose an identity provider:</p>
+
+<form id="login_form" name="login_form" action="" method="post">
+<ul class="login">
+{%- for provider in providers %}
+  <li class="login">
+    <button class="{{ provider|lower }} login" type="submit" name="provider:{{ provider|lower }}" value="{{ provider }}">
+      Login with {{ provider }}
+    </button>
+  </li>
+{%- endfor %}
+</ul>
+</form>
+{% endblock content %}

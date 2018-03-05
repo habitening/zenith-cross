@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}{% endblock title %} - zenith-cross</title>
+  <meta name="description" content="{{ self.title() }}">
+</head>
+
+<body>
+
+<header>
+<ul>
+  <li><a href="{{ reverse('home')|safe }}">Home</a></li>
+  <li><a href="{{ reverse('login')|safe }}">Login</a></li>
+  <li><a href="{{ reverse('secret')|safe }}">Secret keys</a></li>
+</ul>
+</header>
+
+<main>
+{% block content %}
+<h1>{{ self.title() }}</h1>
+{% endblock content %}
+</main>
+
+<footer>
+<p><a href="https://github.com/habitening/zenith-cross" target="_blank" title="The GitHub repository">zenith-cross on GitHub</a></p>
+</footer>
+
+</body>
+
+</html>
