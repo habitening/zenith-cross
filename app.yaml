@@ -1,0 +1,33 @@
+application: zenith-cross
+version: mark1
+runtime: python27
+api_version: 1
+threadsafe: true
+
+handlers:
+# Default handler
+- url: /.*
+  script: main.app
+  secure: always
+
+libraries:
+- name: jinja2
+  version: "2.6"
+
+- name: webapp2
+  version: "2.5.2"
+
+- name: webob
+  version: "1.2.3"
+
+- name: yaml
+  version: "3.10"
+
+skip_files:
+- ^(.*/)?#.*#$
+- ^(.*/)?.*~$
+- ^(.*/)?.*\.py[co]$
+- ^(.*/)?.*/RCS/.*$
+- ^(.*/)?\..*$
+# Skip the unit and integration tests
+- ^test.*\.py[co]$
