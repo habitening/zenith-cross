@@ -169,7 +169,9 @@ class JSONSessionFactory(sessions.CustomBackendSessionFactory):
             if self.session_model._is_valid_sid(self.sid):
                 key = ndb.Key(self.session_model, self.sid)
                 key.delete()
-            response.delete_cookie(self.name, **self.session_args)
+            response.delete_cookie(
+                self.name, path=self.session_args.get('path'),
+                domain=self.session_args.get('domain'))
             return
 
         session_data = dict(self.session)
@@ -188,4 +190,6 @@ class JSONSessionFactory(sessions.CustomBackendSessionFactory):
             else:
                 # Otherwise, the session was not found in the datastore
                 # Delete the cookie to force the user to start over
-                response.delete_cookie(self.name, **self.session_args)
+                response.delete_cookie(
+                    self.name, path=self.session_args.get('path'),
+                    domain=self.session_args.get('domain'))
