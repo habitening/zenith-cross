@@ -180,7 +180,8 @@ class LoginHandler(base_handler.BaseHandler):
             state = security.generate_random_string(
                 length=32, pool=security.ALPHANUMERIC)
             # Store the state in the session so it can be verified on callback
-            #self.session['state'] = state
+            # It is not a secret because it is exposed in the redirect
+            self.session['state'] = state
             if provider == 'github':
                 return self.redirect(GitHubCallback.create_login_url(
                     callback_url, state))
@@ -209,10 +210,9 @@ class GitHubCallback(base_handler.BaseHandler):
             return self.after_logout()
 
         state = self.request.GET.get('state')
-##        expected_state = self.session.get('state')
-##        if state != expected_state:
-##            logging.warning('state parameter did not match!')
-##            return self.after_logout()
+        expected_state = self.session.get('state')
+        if state != expected_state:
+            return self.after_logout()
 
         # Trade code for access_token and use access_token to get user_id
         code = self.request.GET.get('code')
@@ -225,11 +225,11 @@ class GitHubCallback(base_handler.BaseHandler):
         if (not isinstance(user_id, basestring)) or (len(user_id) <= 0):
             return self.after_logout()
 
-##        self.session['access_token'] = token
-##        self.session['user_id'] = user_id
-##        self.session['hash'] = hash_user_id(
-##            user_id, CONFIG['GitHub'].get('method'),
-##            CONFIG['GitHub'].get('pepper'), 'github_')
+        self.session['access_token'] = token
+        self.session['user_id'] = user_id
+        self.session['hash'] = hash_user_id(
+            user_id, CONFIG['GitHub'].get('method'),
+            CONFIG['GitHub'].get('pepper'), 'github_')
 
         return self.after_login()
 
@@ -330,10 +330,10 @@ class GoogleCallback(base_handler.BaseHandler):
         if isinstance(current_user, users.User):
             user_id = current_user.user_id()
             if isinstance(user_id, basestring) and (len(user_id) > 0):
-##                self.session['user_id'] = user_id
-##                self.session['hash'] = hash_user_id(
-##                    user_id, CONFIG['Google'].get('method'),
-##                    CONFIG['Google'].get('pepper'), 'google_')
+                self.session['user_id'] = user_id
+                self.session['hash'] = hash_user_id(
+                    user_id, CONFIG['Google'].get('method'),
+                    CONFIG['Google'].get('pepper'), 'google_')
                 return self.after_login()
 
         # If login was canceled or failed

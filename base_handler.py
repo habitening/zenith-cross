@@ -2,6 +2,9 @@
 
 import webapp2
 from webapp2_extras import jinja2
+from webapp2_extras import sessions
+
+import models
 
 def reverse(name, *args, **kwargs):
     """Return the URI for a route named name."""
@@ -18,6 +21,14 @@ def jinja2_factory(app):
 class BaseHandler(webapp2.RequestHandler):
 
     """The base request handler."""
+
+    def dispatch(self):
+        """Add a session store to the handler."""
+        self.session_store = sessions.get_store(request=self.request)
+        try:
+            super(BaseHandler, self).dispatch()
+        finally:
+            self.session_store.save_sessions(self.response)
 
     def after_login(self):
         """Redirect to the route to show after logging in."""
@@ -48,3 +59,30 @@ class BaseHandler(webapp2.RequestHandler):
             raise TypeError('values must be a dict.')
         self.response.write(
             self.jinja2.render_template(template_name, **values))
+
+    @webapp2.cached_property
+    def session(self):
+        """Return a datastore backed session for the default cookie name.
+
+        DO NOT use this session for flash messages because it is kept in the
+        datastore and adding flash messages will incur expensive datastore
+        writes! Instead, create a separate session for flash messages backed by
+        a secure cookie:
+
+            @webapp2.cached_property
+            def flash(self):
+                # Need to supply a name to avoid using the default cookie name
+                return self.session_store.get_session(
+                    name='flash', backend='securecookie')
+
+        Django and Flask have a similar implementation. Then add your flash
+        messages to this separate session:
+
+            self.flash.add_flash('Foobar!')
+            messages = self.flash.get_flashes()
+
+        It is fine that the flash messages are visible in a secure cookie
+        because the user will see them in the next response any way.
+        """
+        return self.session_store.get_session(
+            factory=models.JSONSessionFactory)

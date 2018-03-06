@@ -36,6 +36,31 @@ class SecretHandler(base_handler.BaseHandler):
 # Detect if the code is running on the development web server
 _debug = os.environ.get('SERVER_SOFTWARE', '').startswith('Dev')
 
+_config = {
+    'webapp2_extras.sessions': {
+        # This is the only required configuration key
+        'secret_key': zenith_cross.CONFIG['webapp2'].get('secret_key'),
+        # Default cookie name (same as Flask; Django uses "sessionid")
+        'cookie_name': 'session',
+        # Tie session expiration to the cookie
+        'session_max_age': None,
+        'cookie_args': {
+            # Limit the cookie to the current session (until browser close)
+            'max_age': None,
+            # Limit the cookie to this subdomain because App Engine
+            # applications are implemented as subdomains of appspot.com
+            'domain': None,
+            # Make the cookie valid for all paths of the application
+            'path': '/',
+            # The development web server does not support HTTPS
+            'secure': not _debug,
+            # Disallow JavaScript access to the cookie
+            'httponly': True
+        }
+    }
+}
+"""Dictionary webapp2 configuration."""
+
 app = webapp2.WSGIApplication([
     routes.PathPrefixRoute(r'/login', [
         webapp2.Route(r'/github', handler=zenith_cross.GitHubCallback,
@@ -51,4 +76,4 @@ app = webapp2.WSGIApplication([
     routes.RedirectRoute(r'/secret/', handler=SecretHandler,
                          strict_slash=True, name='secret'),
     webapp2.Route(r'/', handler=HomeHandler, name='home')
-], debug=_debug)
+], config=_config, debug=_debug)
