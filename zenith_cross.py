@@ -23,11 +23,16 @@ _PATH_TO_CONFIG = os.path.abspath(os.path.join(os.path.dirname(__file__),
 _PROVIDERS = frozenset(['GitHub', 'Google'])
 """Set of string keys of the implemented identity providers."""
 
-def _parse_config(path):
+def _parse_config(path, required_keys=['webapp2']):
     """Return a configuration dictionary parsed from the YAML file at path.
 
     Args:
         path: String ASCII path to the YAML configuration file.
+        required_keys: Iterable of string required keys in the configuration
+            dictionary.
+    Raises:
+        IndexError if a required key is missing from the configuration
+        dictionary.
     Returns:
         Configuration dictionary parsed from the YAML file at path.
     """
@@ -46,9 +51,21 @@ def _parse_config(path):
         except yaml.YAMLError:
             pass
 
+    expected = list(_PROVIDERS)
+    for key in required_keys:
+        if not isinstance(key, basestring):
+            continue
+        if len(key) <= 0:
+            continue
+        expected.append(key)
+        if key not in config:
+            raise IndexError(
+                'Missing required key in CONFIG: {0}'.format(key))
+
+    expected = frozenset(expected)
     for provider in config.keys():
         # Remove unimplemented or unrecognized identity providers
-        if provider not in _PROVIDERS:
+        if provider not in expected:
             del config[provider]
             continue
         # Force a configuration value to be a string
@@ -145,6 +162,7 @@ def hash_user_id(user_id, method, pepper=None, prefix=None):
 class LogoutHandler(base_handler.BaseHandler):
     def get(self):
         """Discard the session."""
+        self.session['_logout'] = True
         return self.after_logout()
 
 class LoginHandler(base_handler.BaseHandler):
