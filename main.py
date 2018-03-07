@@ -5,6 +5,7 @@ import os
 import webapp2
 from webapp2_extras import routes
 from webapp2_extras import security
+from webapp2_extras import sessions
 
 import base_handler
 import zenith_cross
@@ -15,9 +16,46 @@ class HomeHandler(base_handler.BaseHandler):
         self.render_template('home.html')
 
 class PrivateHandler(base_handler.BaseHandler):
+
+    """Handler that requires a logged in user.
+
+    Subclass this handler for your login protected routes.
+    """
+
+    def dispatch(self):
+        """Override dispatch to check for a logged in user.
+
+        We cannot simply extend dispatch() in BaseHandler because self.session
+        requires self.session_store be set first.
+
+        An alternative approach is to create a decorator but in that case you
+        would need to decorate every method. That is prone to accidentally
+        missing one and opening a security hole. Overriding dispatch like we do
+        here protects every method of the handler.
+
+        Yet another approach is to have the checking code in BaseHandler under
+        a class attribute flag. Handlers that require the check can set the
+        flag to True. This means the superclass needs to know about the
+        subclass. I prefer the onus of extending be on the subclass.
+        """
+        self.session_store = sessions.get_store(request=self.request)
+        if 'hash' not in self.session:
+            return self.redirect_to('login')
+        try:
+            # Bypass dispatch() in BaseHandler and call the version in its
+            # parent class
+            super(base_handler.BaseHandler, self).dispatch()
+        finally:
+            self.session_store.save_sessions(self.response)
+
     def get(self):
-        """Show a private page only accessible by an authenticated user."""
-        self.render_template('private.html')
+        """Show a private page only accessible by a logged in user."""
+        values = {
+            'hash': self.session.get('hash'),
+            'state': self.session.get('state'),
+            'user_id': self.session.get('user_id')
+        }
+        self.render_template('private.html', values)
 
 class SecretHandler(base_handler.BaseHandler):
     def get(self):
