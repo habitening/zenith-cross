@@ -5,5 +5,16 @@
 {% block content %}
 <h1>{{ self.title() }}</h1>
 
-<p>This is a protected page only accessible if you are authenticated.</p>
+<p>This is a private page only accessible if you are logged in.</p>
+
+<p>Below are some values from your session:</p>
+
+<dl>
+  <dt>hash</dt>
+  <dd>{{ hash }}</dd>
+  <dt>state</dt>
+  <dd>{{ state }}</dd>
+  <dt>user_id</dt>
+  <dd>{{ user_id }}</dd>
+</dl>
 {% endblock content %}
