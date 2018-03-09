@@ -230,8 +230,10 @@ class JSONSessionFactoryTest(test.BaseTestCase):
              always returns a new empty SessionDict.)
         invalid  True  False    Do nothing
         invalid  True  True     Create a new JSONSession to store the session
+            (This is the normal case when a session is first created.)
         valid    False False    Do nothing
         valid    False True     Update the existing JSONSession in datastore
+            (This is the normal case when an existing session is updated.)
         valid    True  False    Do nothing
             (This case is impossible in practice because a valid session ID
              not found in the datastore resets the session ID.)
@@ -241,6 +243,8 @@ class JSONSessionFactoryTest(test.BaseTestCase):
         """
         factory = models.JSONSessionFactory('factory', DummyStore())
         response = DummyResponse()
+
+        # Test nothing is done when the session is not of the correct type
         for value in [None, 42, '', []]:
             factory.session = value
             factory.save_session(response)
@@ -266,10 +270,10 @@ class JSONSessionFactoryTest(test.BaseTestCase):
         self.assertEqual(session.data, {'foo': 'bar'})
         self.assertEqual(response.set_cookie_count, 1)
         self.assertEqual(response.delete_cookie_count, 0)
-        session.key.delete()
-        self.assertEqual(models.JSONSession.query().count(), 0)
 
         # Test when the session ID is invalid and SessionDict is new
+        session.key.delete()
+        self.assertEqual(models.JSONSession.query().count(), 0)
         response.reset()
         factory.sid = None
         factory.session = sessions.SessionDict(factory, new=True)
@@ -333,12 +337,13 @@ class JSONSessionFactoryTest(test.BaseTestCase):
         self.assertEqual(dict(factory.session), {'foo': 'bar'})
         factory.save_session(response)
         self.assertEqual(models.JSONSession.query().count(), 2)
-        self.assertEqual(factory.sid, sid)
+        self.assertNotEqual(factory.sid, sid)
         for session in models.JSONSession.query().fetch():
             if session.data['foo'] == 'bar':
-                self.assertEqual(session.key.string_id(), sid)
-            elif session.data['foo'] == 'baz':
                 self.assertNotEqual(session.key.string_id(), sid)
+                self.assertEqual(session.key.string_id(), factory.sid)
+            elif session.data['foo'] == 'baz':
+                self.assertEqual(session.key.string_id(), sid)
                 self.assertNotEqual(session.key.string_id(), factory.sid)
             else:
                 self.fail('Unexpected JSONSession in datastore.')
@@ -346,7 +351,7 @@ class JSONSessionFactoryTest(test.BaseTestCase):
         self.assertEqual(response.delete_cookie_count, 0)
 
     def test_save_session_logout(self):
-        """Test saving the session with the special "_logout" key."""
+        """Test saving a session with the special "_logout" key."""
         factory = models.JSONSessionFactory('factory', DummyStore())
         response = DummyResponse()
 
@@ -379,7 +384,7 @@ class JSONSessionFactoryTest(test.BaseTestCase):
         self.assertEqual(response.delete_cookie_count, 1)
 
         # Test "_logout" accidentally saved to datastore
-        # This is not possible in the normal flow
+        # This is not possible normally because "_logout" is intercepted
         response.reset()
         logout_session = models.JSONSession._create({'_logout': True})
         factory.session = factory._get_by_sid(logout_session.key.string_id())

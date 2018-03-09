@@ -19,8 +19,7 @@ class JSONSession(ndb.Model):
         unnecessary memcache calls are removed because NDB already caches
             entities in memcache and caching more items in memcache just
             increases the chance of eviction
-        get_by_sid() is removed because get_by_id() already does most of the
-            work
+        get_by_sid() is removed because get_by_id() already does the same thing
         create the entity in a transaction to make sure the ID is unique and
             to avoid session fixation
 
@@ -144,16 +143,20 @@ class JSONSessionFactory(sessions.CustomBackendSessionFactory):
                 self.sid = sid
                 return sessions.SessionDict(self, data=backing.data)
 
+        # Otherwise, sid is not valid or not found in the datastore
+        # For the latter, even if this is a session fixation attack with
+        # an old ID, returning an empty new session is the correct action
+        # because it does not expose any information
         self.sid = None
         return sessions.SessionDict(self, new=True)
 
     def _is_valid_sid(self, sid):
         raise DeprecationWarning(
-            'Generating the ID here makes the session vulnerable to fixation')
+            'Generating the ID here makes the session vulnerable to fixation!')
 
     def _get_new_sid(self):
         raise DeprecationWarning(
-            'Generating the ID here makes the session vulnerable to fixation')
+            'Generating the ID here makes the session vulnerable to fixation!')
 
     def save_session(self, response):
         """Save the session and write the session ID to a secure cookie.
@@ -161,8 +164,7 @@ class JSONSessionFactory(sessions.CustomBackendSessionFactory):
         If the special key "_logout" is found in the session, then the cookie
         is deleted. This implementation has the least impact on webapp2.
         """
-        if ((not isinstance(self.session, sessions.SessionDict)) or
-            (not self.session.modified)):
+        if not isinstance(self.session, sessions.SessionDict):
             return
 
         if '_logout' in self.session:
@@ -174,22 +176,24 @@ class JSONSessionFactory(sessions.CustomBackendSessionFactory):
                 domain=self.session_args.get('domain'))
             return
 
+        if not self.session.modified:
+            # Defer saving the session until the next time it is modified
+            return
+
         session_data = dict(self.session)
-        if self.session.new:
-            backing = self.session_model._create(session_data)
-            self.sid = backing.key.string_id()
-            self.session_store.save_secure_cookie(
-                response, self.name, {'_sid': self.sid}, **self.session_args)
-        else:
+        if ((not self.session.new) and
+            self.session_model._is_valid_sid(self.sid)):
             # Update the existing entity
             key = ndb.Key(self.session_model, self.sid)
             backing = key.get()
             if isinstance(backing, self.session_model):
                 backing.data = session_data
                 backing.put()
-            else:
-                # Otherwise, the session was not found in the datastore
-                # Delete the cookie to force the user to start over
-                response.delete_cookie(
-                    self.name, path=self.session_args.get('path'),
-                    domain=self.session_args.get('domain'))
+                return
+
+        # Otherwise, the session is new or not found in the datastore
+        # Save to a new entity and update the session ID
+        backing = self.session_model._create(session_data)
+        self.sid = backing.key.string_id()
+        self.session_store.save_secure_cookie(
+            response, self.name, {'_sid': self.sid}, **self.session_args)
