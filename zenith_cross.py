@@ -228,6 +228,8 @@ class GitHubCallback(base_handler.BaseHandler):
             return self.after_logout()
 
         state = self.request.GET.get('state')
+        if (not isinstance(state, basestring)) or (len(state) <= 0):
+            return self.after_logout()
         expected_state = self.session.get('state')
         if state != expected_state:
             return self.after_logout()
