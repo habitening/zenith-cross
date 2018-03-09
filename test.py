@@ -30,6 +30,9 @@ class BaseTestCase(unittest.TestCase):
         # URL fetch
         self.testbed.init_urlfetch_stub()
 
+        # Users API
+        self.testbed.init_user_stub()
+
     def tearDown(self):
         """Deactivate the testbed."""
         self.testbed.deactivate()

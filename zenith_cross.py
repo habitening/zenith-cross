@@ -286,6 +286,11 @@ class GitHubCallback(base_handler.BaseHandler):
         Returns:
             String access token or None if an error occurred.
         """
+        if not isinstance(code, basestring):
+            return None
+        if len(code) <= 0:
+            return None
+
         payload = urllib.urlencode({
             'client_id': CONFIG['GitHub'].get('client_id'),
             'client_secret': CONFIG['GitHub'].get('client_secret'),
@@ -317,6 +322,11 @@ class GitHubCallback(base_handler.BaseHandler):
     @staticmethod
     def get_user_id(access_token):
         """Return the GitHub user ID using access_token."""
+        if not isinstance(access_token, basestring):
+            return None
+        if len(access_token) <= 0:
+            return None
+
         payload = '{"query": "query { viewer { email id login name }}"}'
         headers = {'Authorization': 'bearer ' + access_token}
         response = fetch(GitHubCallback.GRAPHQL_ENDPOINT,
