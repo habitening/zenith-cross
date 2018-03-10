@@ -19,6 +19,8 @@ class ConfigurationTest(test.BaseTestCase):
             self.assertRaises(ValueError, zenith_cross._parse_config, value)
         for value in ['zenith_cross.py', 'test_zenith_cross.py']:
             self.assertRaises(IndexError, zenith_cross._parse_config, value)
+        self.assertEqual(zenith_cross._parse_config('config.yaml'),
+                         zenith_cross.CONFIG)
 
     def test_bad_config(self):
         """Test the bad configuration file."""
@@ -115,17 +117,24 @@ class ConfigurationTest(test.BaseTestCase):
 
 class GitHubTest(test.BaseTestCase):
     def setUp(self):
+        """Modify the GitHub configuration for the test."""
         super(GitHubTest, self).setUp()
 
-        zenith_cross.CONFIG = {
-            'GitHub': {
-                'method': 'sha1',
-                'pepper': 'pepper',
-                'client_id': 'client_id',
-                'client_secret': 'client_secret'
-            }
+        self.original_config = zenith_cross.CONFIG.get('GitHub').copy()
+
+        zenith_cross.CONFIG['GitHub'] = {
+            'method': 'sha1',
+            'pepper': 'pepper',
+            'client_id': 'client_id',
+            'client_secret': 'client_secret'
         }
         """Dictionary GitHub configuration to use in the tests."""
+
+    def tearDown(self):
+        """Restore the GitHub configuration."""
+        super(GitHubTest, self).tearDown()
+
+        zenith_cross.CONFIG['GitHub'] = self.original_config
 
     def test_create_login_url(self):
         """Test the URL to request a user's GitHub identity."""
