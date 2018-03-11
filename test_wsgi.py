@@ -57,8 +57,12 @@ class SanityTest(_WSGITestCase):
             value = self.serializer.serialize('session', {'_sid': sid})
             self.assertEqual(self.get_session_ID(value), sid)
             self.assertEqual(self.get_session_ID(value, 'session'), sid)
+            self.assertRaises(AttributeError, self.get_session_ID,
+                              value, 'sessionid')
             value = self.serializer.serialize('sessionid', {'_sid': sid})
             self.assertEqual(self.get_session_ID(value, 'sessionid'), sid)
+            self.assertRaises(AttributeError, self.get_session_ID,
+                              value, 'session')
 
     def test_set_session_ID(self):
         """Test serializing the session ID to a cookie value."""
@@ -93,6 +97,12 @@ class LoginTest(_WSGITestCase):
         self.url = self.uri_for('login')
         """String URL for the login route."""
 
+        self.provider_map = {
+            'github': zenith_cross.GitHubCallback.LOGIN_ENDPOINT,
+            'google': 'https://www.google.com/accounts/Login'
+        }
+        """Dictionary mapping an identity provider to its login URL."""
+
         self.assertEqual(models.JSONSession.query().count(), 0)
 
     def test_bad_methods(self):
@@ -112,9 +122,7 @@ class LoginTest(_WSGITestCase):
         self.assertTrue(response.location.endswith(self.url))
         self.assertNotIn('Set-Cookie', response.headers)
 
-        for provider, prefix in [
-            ('github', zenith_cross.GitHubCallback.LOGIN_ENDPOINT),
-            ('google', 'https://www.google.com/accounts/Login')]:
+        for provider, prefix in self.provider_map.iteritems():
             response = self.app.get(self.url)
             self.assertEqual(response.status_int, 200)
             self.assertEqual(models.JSONSession.query().count(), 0)
@@ -146,9 +154,7 @@ class LoginTest(_WSGITestCase):
         self.assertTrue(response.location.endswith(self.url))
         self.assertNotIn('Set-Cookie', response.headers)
 
-        for provider, prefix in [
-            ('github', zenith_cross.GitHubCallback.LOGIN_ENDPOINT),
-            ('google', 'https://www.google.com/accounts/Login')]:
+        for provider, prefix in self.provider_map.iteritems():
             self.assertEqual(models.JSONSession.query().count(), 0)
             response = self.app.post(
                 self.url, {'provider:' + provider: provider})
@@ -383,3 +389,35 @@ class FrontendTest(_WSGITestCase):
         response = self.app.get(url)
         self.assertEqual(response.status_int, 302)
         self.assertTrue(response.location.endswith(login_url))
+
+    def test_private_multiple_sessions(self):
+        """Test the private page with multiple different sessions."""
+        sessions = [
+            models.JSONSession._create({
+                'hash': 'foo',
+                'state': 'bar',
+                'user_id': 'baz'
+            }),
+            models.JSONSession._create({
+                'hash': 'tic',
+                'state': 'tac',
+                'user_id': 'toe'
+            }),
+            models.JSONSession._create({
+                'hash': 'Rock',
+                'state': 'Paper',
+                'user_id': 'Scissors'
+            })]
+        for session in sessions:
+            self.set_session_ID(session.key.string_id())
+            response = self.app.get(self.uri_for('private'))
+            self.assertEqual(response.status_int, 200)
+            for key, value in session.data.iteritems():
+                self.assertIn('<dd>{0}</dd>'.format(value), response.body)
+            # Test none of the other sessions leaked through
+            for s in sessions:
+                if s.key.string_id() == session.key.string_id():
+                    continue
+                for key, value in s.data.iteritems():
+                    self.assertNotIn('<dd>{0}</dd>'.format(value),
+                                     response.body)
