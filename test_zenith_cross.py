@@ -65,7 +65,9 @@ class ConfigurationTest(test.BaseTestCase):
 
     def test_fetch(self):
         """Test fetching a URL."""
-        for value in [None, 42, '', []]:
+        for value in [None, 42, '']:
+            self.assertIsNone(
+                zenith_cross.fetch('http://example.com', method=value))
             self.assertRaises(TypeError, zenith_cross.fetch,
                               'http://example.com', headers=value)
 
@@ -75,6 +77,17 @@ class ConfigurationTest(test.BaseTestCase):
         content_type = response.headers.get('Content-Type')
         self.assertIsInstance(content_type, basestring)
         self.assertTrue(content_type.startswith('application/json'))
+
+        result = zenith_cross.parse_JSON_response(response)
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, list)
+
+    def test_parse_JSON_response(self):
+        """Test parsing a JSON response."""
+        self.assertIsNone(zenith_cross.parse_JSON_response(None))
+        for value in [None, 42, '', []]:
+            self.assertEqual(zenith_cross.parse_JSON_response(None, value),
+                             value)
 
     def test_hash_user_id(self):
         """Test hashing a user ID."""
@@ -119,12 +132,20 @@ class ConfigurationTest(test.BaseTestCase):
             self.assertEqual(zenith_cross.hash_user_id(
                 user_id, method, 'barbaz', 'prefix_'), 'prefix_' + expected)
 
-class FacebookTest(test.BaseTestCase):
-    def setUp(self):
-        """Modify the Facebook configuration for the test."""
-        super(FacebookTest, self).setUp()
+class OAuth2Test(test.BaseTestCase):
+    @property
+    def handler_class(self):
+        """Return webapp2.RequestHandler class containing all the helpers."""
+        # LinkedIn has the truest OAuth 2.0 implementation (no deviations)
+        return zenith_cross.LinkedInCallback
 
-        self.key = zenith_cross.FacebookCallback.CONFIG_KEY
+    def setUp(self):
+        """Modify the configuration for the test."""
+        super(OAuth2Test, self).setUp()
+
+        self.key = self.handler_class.CONFIG_KEY
+        """String key to the configuration dictionary."""
+
         self.original_config = None
         if self.key in zenith_cross.CONFIG:
             self.original_config = zenith_cross.CONFIG[self.key].copy()
@@ -135,14 +156,67 @@ class FacebookTest(test.BaseTestCase):
             'client_id': 'client_id',
             'client_secret': 'client_secret'
         }
-        """Dictionary Facebook configuration to use in the tests."""
+        """Dictionary configuration to use in the tests."""
+
+        self.redirect_uris = [
+            'foobar', '/foobar', '/foobar/', '/foo/bar',
+            'http://example.com', 'https://example.com'
+        ]
+        """List of string redirect_uri to use in the tests."""
 
     def tearDown(self):
-        """Restore the Facebook configuration."""
-        super(FacebookTest, self).tearDown()
+        """Restore the configuration."""
+        super(OAuth2Test, self).tearDown()
 
         if self.original_config is not None:
             zenith_cross.CONFIG[self.key] = self.original_config
+
+    def test_config_key(self):
+        """Test the key for the LinkedIn configuration dictionary."""
+        self.assertEqual(self.key, 'LinkedIn')
+
+    def test_endpoints(self):
+        """Test the various endpoints are defined and non-empty."""
+        for name in [
+            'AUTHORIZATION_ENDPOINT', 'TOKEN_ENDPOINT', 'PROFILE_ENDPOINT']:
+            endpoint = getattr(self.handler_class, name)
+            self.assertIsInstance(endpoint, basestring)
+            self.assertTrue(endpoint.startswith('https://'))
+
+    def test_create_login_url(self):
+        """Test the URL to request a user's LinkedIn identity."""
+        parameters = {
+            'client_id': 'client_id',
+            'response_type': 'code',
+            'scope': 'r_basicprofile',
+            'state': 'state'
+        }
+        for url in self.redirect_uris:
+            parameters['redirect_uri'] = url
+            expected = self.handler_class.AUTHORIZATION_ENDPOINT
+            expected += '?' + urllib.urlencode(parameters)
+            self.assertEqual(self.handler_class.create_login_url(
+                url, parameters['state']), expected)
+
+    def test_get_access_token(self):
+        """Test exchanging the temporary code parameter for an access token."""
+        for value in [None, 42, '', []]:
+            self.assertIsNone(self.handler_class.get_access_token(
+                value, 'redirect_uri', 'state'))
+        self.assertIsNone(self.handler_class.get_access_token(
+            'code', 'redirect_uri', 'state'))
+
+    def test_get_user_id(self):
+        """Test getting the user ID using an access token."""
+        for value in [None, 42, '', []]:
+            self.assertIsNone(self.handler_class.get_user_id(value))
+        self.assertIsNone(self.handler_class.get_user_id('access_token'))
+
+class FacebookTest(OAuth2Test):
+    @property
+    def handler_class(self):
+        """Return webapp2.RequestHandler class containing all the helpers."""
+        return zenith_cross.FacebookCallback
 
     def test_config_key(self):
         """Test the key for the Facebook configuration dictionary."""
@@ -156,60 +230,25 @@ class FacebookTest(test.BaseTestCase):
             'scope': 'public_profile',
             'state': 'state'
         }
-        for url in ['foobar', '/foobar', '/foobar/', '/foo/bar',
-                    'http://example.com', 'https://example.com']:
+        for url in self.redirect_uris:
             parameters['redirect_uri'] = url
-            expected = zenith_cross.FacebookCallback.AUTHORIZATION_ENDPOINT
+            expected = self.handler_class.AUTHORIZATION_ENDPOINT
             expected += '?' + urllib.urlencode(parameters)
-            self.assertEqual(zenith_cross.FacebookCallback.create_login_url(
+            self.assertEqual(self.handler_class.create_login_url(
                 url, parameters['state']), expected)
-
-    def test_get_access_token(self):
-        """Test exchanging the temporary code parameter for an access token."""
-        for value in [None, 42, '', []]:
-            self.assertIsNone(zenith_cross.FacebookCallback.get_access_token(
-                value, 'redirect_uri', 'state'))
-        self.assertIsNone(zenith_cross.FacebookCallback.get_access_token(
-            'code', 'redirect_uri', 'state'))
 
     def test_get_appsecret_proof(self):
         """Test signing the access token with client_secret."""
         for token in ['foobar', 'access_token']:
             self.assertEqual(
-                zenith_cross.FacebookCallback.get_appsecret_proof(token),
+                self.handler_class.get_appsecret_proof(token),
                 hmac.new('client_secret', token, hashlib.sha256).hexdigest())
 
-    def test_get_user_id(self):
-        """Test getting the Facebook user ID using an access token."""
-        for value in [None, 42, '', []]:
-            self.assertIsNone(zenith_cross.FacebookCallback.get_user_id(value))
-        self.assertIsNone(
-            zenith_cross.FacebookCallback.get_user_id('access_token'))
-
-class GitHubTest(test.BaseTestCase):
-    def setUp(self):
-        """Modify the GitHub configuration for the test."""
-        super(GitHubTest, self).setUp()
-
-        self.key = zenith_cross.GitHubCallback.CONFIG_KEY
-        self.original_config = None
-        if self.key in zenith_cross.CONFIG:
-            self.original_config = zenith_cross.CONFIG[self.key].copy()
-
-        zenith_cross.CONFIG[self.key] = {
-            'method': 'sha1',
-            'pepper': 'pepper',
-            'client_id': 'client_id',
-            'client_secret': 'client_secret'
-        }
-        """Dictionary GitHub configuration to use in the tests."""
-
-    def tearDown(self):
-        """Restore the GitHub configuration."""
-        super(GitHubTest, self).tearDown()
-
-        if self.original_config is not None:
-            zenith_cross.CONFIG[self.key] = self.original_config
+class GitHubTest(OAuth2Test):
+    @property
+    def handler_class(self):
+        """Return webapp2.RequestHandler class containing all the helpers."""
+        return zenith_cross.GitHubCallback
 
     def test_config_key(self):
         """Test the key for the GitHub configuration dictionary."""
@@ -222,43 +261,27 @@ class GitHubTest(test.BaseTestCase):
             'scope': 'user',
             'state': 'state'
         }
-        for url in ['foobar', '/foobar', '/foobar/', '/foo/bar',
-                    'http://example.com', 'https://example.com']:
+        for url in self.redirect_uris:
             parameters['redirect_uri'] = url
-            expected = zenith_cross.GitHubCallback.AUTHORIZATION_ENDPOINT + '?'
-            expected += urllib.urlencode(parameters)
-            self.assertEqual(zenith_cross.GitHubCallback.create_login_url(
+            expected = self.handler_class.AUTHORIZATION_ENDPOINT
+            expected += '?' + urllib.urlencode(parameters)
+            self.assertEqual(self.handler_class.create_login_url(
                 url, parameters['state']), expected)
-            for value in [None, 42, '', [], 'False', 'True']:
-                zenith_cross.CONFIG['GitHub']['allow_signup'] = value
-                self.assertEqual(zenith_cross.GitHubCallback.create_login_url(
+            for value in [None, 42, '', [], 'False', 'True', 'no', 'yes']:
+                zenith_cross.CONFIG[self.key]['allow_signup'] = value
+                self.assertEqual(self.handler_class.create_login_url(
                     url, parameters['state']), expected)
             for value in ['false', 'true']:
-                zenith_cross.CONFIG['GitHub']['allow_signup'] = value
+                zenith_cross.CONFIG[self.key]['allow_signup'] = value
                 parameters['allow_signup'] = value
-                expected = zenith_cross.GitHubCallback.AUTHORIZATION_ENDPOINT
+                expected = self.handler_class.AUTHORIZATION_ENDPOINT
                 expected += '?' + urllib.urlencode(parameters)
-                self.assertEqual(zenith_cross.GitHubCallback.create_login_url(
+                self.assertEqual(self.handler_class.create_login_url(
                     url, parameters['state']), expected)
 
             # Reset for the next iteration
-            del zenith_cross.CONFIG['GitHub']['allow_signup']
+            del zenith_cross.CONFIG[self.key]['allow_signup']
             del parameters['allow_signup']
-
-    def test_get_access_token(self):
-        """Test exchanging the temporary code parameter for an access token."""
-        for value in [None, 42, '', []]:
-            self.assertIsNone(zenith_cross.GitHubCallback.get_access_token(
-                value, 'redirect_uri', 'state'))
-        self.assertIsNone(zenith_cross.GitHubCallback.get_access_token(
-            'code', 'redirect_uri', 'state'))
-
-    def test_get_user_id(self):
-        """Test getting the GitHub user ID using an access token."""
-        for value in [None, 42, '', []]:
-            self.assertIsNone(zenith_cross.GitHubCallback.get_user_id(value))
-        self.assertIsNone(
-            zenith_cross.GitHubCallback.get_user_id('access_token'))
 
 class GoogleTest(test.BaseTestCase):
     def test_create_login_url(self):
@@ -268,63 +291,3 @@ class GoogleTest(test.BaseTestCase):
             self.assertEqual(
                 zenith_cross.GoogleCallback.create_login_url(value, value),
                 users.create_login_url(value))
-
-class LinkedInTest(test.BaseTestCase):
-    def setUp(self):
-        """Modify the LinkedIn configuration for the test."""
-        super(LinkedInTest, self).setUp()
-
-        self.key = zenith_cross.LinkedInCallback.CONFIG_KEY
-        self.original_config = None
-        if self.key in zenith_cross.CONFIG:
-            self.original_config = zenith_cross.CONFIG[self.key].copy()
-
-        zenith_cross.CONFIG[self.key] = {
-            'method': 'sha1',
-            'pepper': 'pepper',
-            'client_id': 'client_id',
-            'client_secret': 'client_secret'
-        }
-        """Dictionary LinkedIn configuration to use in the tests."""
-
-    def tearDown(self):
-        """Restore the LinkedIn configuration."""
-        super(LinkedInTest, self).tearDown()
-
-        if self.original_config is not None:
-            zenith_cross.CONFIG[self.key] = self.original_config
-
-    def test_config_key(self):
-        """Test the key for the LinkedIn configuration dictionary."""
-        self.assertEqual(self.key, 'LinkedIn')
-
-    def test_create_login_url(self):
-        """Test the URL to request a user's LinkedIn identity."""
-        parameters = {
-            'client_id': 'client_id',
-            'response_type': 'code',
-            'scope': 'r_basicprofile',
-            'state': 'state'
-        }
-        for url in ['foobar', '/foobar', '/foobar/', '/foo/bar',
-                    'http://example.com', 'https://example.com']:
-            parameters['redirect_uri'] = url
-            expected = zenith_cross.LinkedInCallback.AUTHORIZATION_ENDPOINT
-            expected += '?' + urllib.urlencode(parameters)
-            self.assertEqual(zenith_cross.LinkedInCallback.create_login_url(
-                url, parameters['state']), expected)
-
-    def test_get_access_token(self):
-        """Test exchanging the temporary code parameter for an access token."""
-        for value in [None, 42, '', []]:
-            self.assertIsNone(zenith_cross.LinkedInCallback.get_access_token(
-                value, 'redirect_uri', 'state'))
-        self.assertIsNone(zenith_cross.LinkedInCallback.get_access_token(
-            'code', 'redirect_uri', 'state'))
-
-    def test_get_user_id(self):
-        """Test getting the LinkedIn user ID using an access token."""
-        for value in [None, 42, '', []]:
-            self.assertIsNone(zenith_cross.LinkedInCallback.get_user_id(value))
-        self.assertIsNone(
-            zenith_cross.LinkedInCallback.get_user_id('access_token'))
