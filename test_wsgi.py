@@ -98,7 +98,7 @@ class LoginTest(_WSGITestCase):
         """String URL for the login route."""
 
         self.provider_map = {
-            'github': zenith_cross.GitHubCallback.LOGIN_ENDPOINT,
+            'github': zenith_cross.GitHubCallback.AUTHORIZATION_ENDPOINT,
             'google': 'https://www.google.com/accounts/Login'
         }
         """Dictionary mapping an identity provider to its login URL."""

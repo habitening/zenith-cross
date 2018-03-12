@@ -1,5 +1,7 @@
 """webapp2 handlers and helpers to support federated login."""
 
+import hashlib
+import hmac
 import json
 import logging
 import os.path
@@ -20,7 +22,7 @@ _PATH_TO_CONFIG = os.path.abspath(os.path.join(os.path.dirname(__file__),
                                                'config.yaml'))
 """String path to the YAML configuration file."""
 
-_PROVIDERS = frozenset(['GitHub', 'Google'])
+_PROVIDERS = frozenset(['Facebook', 'GitHub', 'Google'])
 """Set of string keys of the implemented identity providers."""
 
 def _parse_config(path, required_keys=['webapp2']):
@@ -63,6 +65,7 @@ def _parse_config(path, required_keys=['webapp2']):
                 'Missing required key in CONFIG: {0}'.format(key))
 
     expected = frozenset(expected)
+    # Cannot use iterkeys() because we are modifying the dictionary
     for provider in config.keys():
         # Remove unimplemented or unrecognized identity providers
         if provider not in expected:
@@ -96,7 +99,7 @@ def fetch(url, payload=None, method=urlfetch.GET, headers={}, deadline=5):
             for a response up to a limit of 60 seconds.
             Defaults to 5 seconds.
     Returns:
-        urlfetch._URLFetchResult object to the result of the fetch or
+        urlfetch._URLFetchResult object to the response of the fetch or
         None if an error occurred or a response other than 200 was returned.
     """
     if not isinstance(headers, dict):
@@ -120,28 +123,43 @@ def fetch(url, payload=None, method=urlfetch.GET, headers={}, deadline=5):
     else:
         return None
 
+def parse_JSON_response(response, default=None):
+    """Return the JSON object in response or default."""
+    if response is None:
+        return default
+    content_type = response.headers.get('Content-Type')
+    if (isinstance(content_type, basestring) and
+        content_type.startswith('application/json')):
+        try:
+            result = json.loads(response.content)
+        except ValueError:
+            return default
+        else:
+            return result
+    return default
+
 def hash_user_id(user_id, method, pepper=None, prefix=None):
     """Return user_id hashed with method and optionally pepper.
 
-    This function alters the string ID from an identity provider so it is not
-    stored in plaintext. Use the hash as an indexed property in your account
-    implementation if you want account entities with random IDs. If you will
-    not expose the path to the account entities, you can use the hash as the
-    key.
+    This function alters the string user ID from an identity provider so it is
+    not stored in plaintext. Use the hash as an indexed property in your
+    account implementation if you want account entities with random IDs. If you
+    will NEVER expose the path to the account entities, you can use the hash as
+    the key.
 
-    Be careful. The hash is not cryptographically strong. Unlike a
+    Be careful! The hash is not cryptographically strong. Unlike a
     username/password pair, user_id is the key and the value so we cannot use a
     random salt. If we did, then we would not be able to find the hash without
     storing the user_id in plaintext, defeating the original purpose.
 
     Args:
-        user_id: String ID from an identity provider.
+        user_id: String user ID from an identity provider.
         method: String name of a method from hashlib to use to generate the
             hash.
         pepper: Optional string secret constant stored in the configuration.
         prefix: Optional ASCII string prefix to prepend to the hash.
     Returns:
-        String hashed ID from an identity provider with optional prefix.
+        String hashed user ID from an identity provider with optional prefix.
     """
     if not isinstance(user_id, basestring):
         raise TypeError('user_id must be a non-empty string.')
@@ -200,7 +218,10 @@ class LoginHandler(base_handler.BaseHandler):
             # Store the state in the session so it can be verified on callback
             # It is not a secret because it is exposed in the redirect
             self.session['state'] = state
-            if provider == 'github':
+            if provider == 'facebook':
+                return self.redirect(FacebookCallback.create_login_url(
+                    callback_url, state))
+            elif provider == 'github':
                 return self.redirect(GitHubCallback.create_login_url(
                     callback_url, state))
             elif provider == 'google':
@@ -210,19 +231,12 @@ class LoginHandler(base_handler.BaseHandler):
         # Otherwise, unimplemented or unrecognized identity provider
         return self.redirect_to('login')
 
-class GitHubCallback(base_handler.BaseHandler):
+class _OAuth2Callback(base_handler.BaseHandler):
 
-    LOGIN_ENDPOINT = 'https://github.com/login/oauth/authorize'
-    """String URL to the GitHub login endpoint."""
-
-    ACCESS_TOKEN_ENDPOINT = 'https://github.com/login/oauth/access_token'
-    """String URL to the GitHub access token endpoint."""
-
-    GRAPHQL_ENDPOINT = 'https://api.github.com/graphql'
-    """String URL to the GitHub GraphQL API v4 endpoint."""
+    """Superclass for callback handlers based on OAuth 2.0."""
 
     def get(self):
-        """Handle the GitHub redirect back to us."""
+        """Handle the redirect back to us."""
         if (('error' in self.request.GET) or
             ('error_description' in self.request.GET)):
             return self.after_logout()
@@ -234,7 +248,7 @@ class GitHubCallback(base_handler.BaseHandler):
         if state != expected_state:
             return self.after_logout()
 
-        # Trade code for access_token and use access_token to get user_id
+        # Trade code for access token and use access token to get user ID
         code = self.request.GET.get('code')
         if (not isinstance(code, basestring)) or (len(code) <= 0):
             return self.after_logout()
@@ -248,13 +262,136 @@ class GitHubCallback(base_handler.BaseHandler):
         self.session['access_token'] = token
         self.session['user_id'] = user_id
         self.session['hash'] = hash_user_id(
-            user_id, CONFIG['GitHub'].get('method'),
-            CONFIG['GitHub'].get('pepper'), 'github_')
+            user_id, CONFIG[self.CONFIG_KEY].get('method'),
+            CONFIG[self.CONFIG_KEY].get('pepper'),
+            self.CONFIG_KEY.lower() + '_')
 
         return self.after_login()
 
-    @staticmethod
-    def create_login_url(redirect_uri, state):
+class FacebookCallback(_OAuth2Callback):
+
+    CONFIG_KEY = 'Facebook'
+    """String key for the Facebook configuration dictionary."""
+
+    AUTHORIZATION_ENDPOINT = 'https://www.facebook.com/v2.12/dialog/oauth'
+    """String URL to the Facebook authorization endpoint."""
+
+    TOKEN_ENDPOINT = 'https://graph.facebook.com/v2.12/oauth/access_token'
+    """String URL to the Facebook token endpoint."""
+
+    PROFILE_ENDPOINT = 'https://graph.facebook.com/v2.12/me'
+    """String URL to the Facebook public profile endpoint."""
+
+    def get(self):
+        """Handle the Facebook redirect back to us."""
+        if 'error_reason' in self.request.GET:
+            # Facebook includes an extra error_reason parameter
+            return self.after_logout()
+        return super(FacebookCallback, self).get()
+
+    @classmethod
+    def create_login_url(cls, redirect_uri, state):
+        """Return the URL to request a user's Facebook identity.
+
+        Args:
+            redirect_uri: String URL to this callback handler.
+            state: String unguessable random string to protect against
+                cross-site request forgery attacks.
+        Returns:
+            String URL to request a user's Facebook identity.
+        """
+        parameters = {
+            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
+            'redirect_uri': redirect_uri,
+            'response_type': 'code',
+            'scope': 'public_profile',
+            'state': state
+        }
+        return cls.AUTHORIZATION_ENDPOINT + '?' + urllib.urlencode(parameters)
+
+    @classmethod
+    def get_access_token(cls, code, redirect_uri, state):
+        """Exchange the temporary code parameter for an access token.
+
+        Args:
+            code: String temporary authorization code parameter.
+            redirect_uri: String URL to this callback handler.
+            state: String unguessable random string to protect against
+                cross-site request forgery attacks.
+        Returns:
+            String access token or None if an error occurred.
+        """
+        if not isinstance(code, basestring):
+            return None
+        if len(code) <= 0:
+            return None
+
+        parameters = {
+            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
+            'client_secret': CONFIG[cls.CONFIG_KEY].get('client_secret'),
+            'code': code,
+            'redirect_uri': redirect_uri
+        }
+        url = cls.TOKEN_ENDPOINT + '?' + urllib.urlencode(parameters)
+        response = fetch(url)
+        result = parse_JSON_response(response)
+        if isinstance(result, dict):
+            token = result.get('access_token')
+            if isinstance(token, basestring) and (len(token) > 0):
+                return token
+        return None
+
+    @classmethod
+    def get_appsecret_proof(cls, access_token):
+        """Return the app secret proof to verify a Graph API call.
+
+        Args:
+            access_token: String access token
+        Returns:
+            String hex digest of the sha256 hash of access_token,
+            using the app secret as the key.
+        """
+        return hmac.new(CONFIG[cls.CONFIG_KEY].get('client_secret'),
+                        access_token, hashlib.sha256).hexdigest()
+
+    @classmethod
+    def get_user_id(cls, access_token):
+        """Return the Facebook user ID using access_token."""
+        if not isinstance(access_token, basestring):
+            return None
+        if len(access_token) <= 0:
+            return None
+
+        parameters = {
+            'access_token': access_token,
+            'appsecret_proof': cls.get_appsecret_proof(access_token),
+            'fields': 'id,name'
+        }
+        url = cls.PROFILE_ENDPOINT + '?' + urllib.urlencode(parameters)
+        response = fetch(url)
+        result = parse_JSON_response(response)
+        if isinstance(result, dict):
+            user_id = result.get('id')
+            if isinstance(user_id, basestring) and (len(user_id) > 0):
+                return user_id
+        return None
+
+class GitHubCallback(_OAuth2Callback):
+
+    CONFIG_KEY = 'GitHub'
+    """String key for the GitHub configuration dictionary."""
+
+    AUTHORIZATION_ENDPOINT = 'https://github.com/login/oauth/authorize'
+    """String URL to the GitHub authorization endpoint."""
+
+    TOKEN_ENDPOINT = 'https://github.com/login/oauth/access_token'
+    """String URL to the GitHub token endpoint."""
+
+    PROFILE_ENDPOINT = 'https://api.github.com/graphql'
+    """String URL to the GitHub GraphQL API v4 endpoint."""
+
+    @classmethod
+    def create_login_url(cls, redirect_uri, state):
         """Return the URL to request a user's GitHub identity.
 
         Args:
@@ -265,23 +402,22 @@ class GitHubCallback(base_handler.BaseHandler):
             String URL to request a user's GitHub identity.
         """
         parameters = {
-            'client_id': CONFIG['GitHub'].get('client_id'),
+            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
             'redirect_uri': redirect_uri,
             'scope': 'user',
             'state': state
         }
-        allow_signup = CONFIG['GitHub'].get('allow_signup')
+        allow_signup = CONFIG[cls.CONFIG_KEY].get('allow_signup')
         if allow_signup in ('true', 'false'):
             parameters['allow_signup'] = allow_signup
-        return GitHubCallback.LOGIN_ENDPOINT + '?' + urllib.urlencode(
-            parameters)
+        return cls.AUTHORIZATION_ENDPOINT + '?' + urllib.urlencode(parameters)
 
-    @staticmethod
-    def get_access_token(code, redirect_uri, state):
+    @classmethod
+    def get_access_token(cls, code, redirect_uri, state):
         """Exchange the temporary code parameter for an access token.
 
         Args:
-            code: String temporary code parameter.
+            code: String temporary authorization code parameter.
             redirect_uri: String URL to this callback handler.
             state: String unguessable random string to protect against
                 cross-site request forgery attacks.
@@ -294,8 +430,8 @@ class GitHubCallback(base_handler.BaseHandler):
             return None
 
         payload = urllib.urlencode({
-            'client_id': CONFIG['GitHub'].get('client_id'),
-            'client_secret': CONFIG['GitHub'].get('client_secret'),
+            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
+            'client_secret': CONFIG[cls.CONFIG_KEY].get('client_secret'),
             'code': code,
             'redirect_uri': redirect_uri,
             'state': state
@@ -304,25 +440,17 @@ class GitHubCallback(base_handler.BaseHandler):
             'Accept': 'application/json',
             'Content-Type': 'application/x-www-form-urlencoded'
         }
-        response = fetch(GitHubCallback.ACCESS_TOKEN_ENDPOINT,
+        response = fetch(cls.TOKEN_ENDPOINT,
                          payload, urlfetch.POST, headers)
-        if response is None:
-            return None
-        content_type = response.headers.get('Content-Type')
-        if (isinstance(content_type, basestring) and
-            content_type.startswith('application/json')):
-            try:
-                result = json.loads(response.content)
-            except ValueError:
-                return None
-            if isinstance(result, dict):
-                token = result.get('access_token')
-                if isinstance(token, basestring) and (len(token) > 0):
-                    return token
+        result = parse_JSON_response(response)
+        if isinstance(result, dict):
+            token = result.get('access_token')
+            if isinstance(token, basestring) and (len(token) > 0):
+                return token
         return None
 
-    @staticmethod
-    def get_user_id(access_token):
+    @classmethod
+    def get_user_id(cls, access_token):
         """Return the GitHub user ID using access_token."""
         if not isinstance(access_token, basestring):
             return None
@@ -331,26 +459,18 @@ class GitHubCallback(base_handler.BaseHandler):
 
         payload = '{"query": "query { viewer { email id login name }}"}'
         headers = {'Authorization': 'bearer ' + access_token}
-        response = fetch(GitHubCallback.GRAPHQL_ENDPOINT,
+        response = fetch(cls.PROFILE_ENDPOINT,
                          payload, urlfetch.POST, headers)
-        if response is None:
-            return None
-        content_type = response.headers.get('Content-Type')
-        if (isinstance(content_type, basestring) and
-            content_type.startswith('application/json')):
-            try:
-                result = json.loads(response.content)
-            except ValueError:
-                return None
-            if isinstance(result, dict):
-                data = result.get('data')
+        result = parse_JSON_response(response)
+        if isinstance(result, dict):
+            data = result.get('data')
+            if isinstance(data, dict):
+                data = data.get('viewer')
                 if isinstance(data, dict):
-                    data = data.get('viewer')
-                    if isinstance(data, dict):
-                        user_id = data.get('id')
-                        if (isinstance(user_id, basestring) and
-                            (len(user_id) > 0)):
-                            return user_id
+                    user_id = data.get('id')
+                    if (isinstance(user_id, basestring) and
+                        (len(user_id) > 0)):
+                        return user_id
         return None
 
 class GoogleCallback(base_handler.BaseHandler):
@@ -382,3 +502,90 @@ class GoogleCallback(base_handler.BaseHandler):
         """
         # Delegate to the App Engine Users API
         return users.create_login_url(redirect_uri)
+
+class LinkedInCallback(_OAuth2Callback):
+
+    CONFIG_KEY = 'LinkedIn'
+    """String key for the LinkedIn configuration dictionary."""
+
+    AUTHORIZATION_ENDPOINT = 'https://www.linkedin.com/oauth/v2/authorization'
+    """String URL to the LinkedIn authorization endpoint."""
+
+    TOKEN_ENDPOINT = 'https://www.linkedin.com/oauth/v2/accessToken'
+    """String URL to the LinkedIn token endpoint."""
+
+    PROFILE_ENDPOINT = 'https://api.linkedin.com/v1/people/~?format=json'
+    """String URL to the LinkedIn basic profile endpoint."""
+
+    @classmethod
+    def create_login_url(cls, redirect_uri, state):
+        """Return the URL to request a user's LinkedIn identity.
+
+        Args:
+            redirect_uri: String URL to this callback handler.
+            state: String unguessable random string to protect against
+                cross-site request forgery attacks.
+        Returns:
+            String URL to request a user's LinkedIn identity.
+        """
+        parameters = {
+            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
+            'redirect_uri': redirect_uri,
+            'response_type': 'code',
+            'scope': 'r_basicprofile',
+            'state': state
+        }
+        return cls.AUTHORIZATION_ENDPOINT + '?' + urllib.urlencode(parameters)
+
+    @classmethod
+    def get_access_token(cls, code, redirect_uri, state):
+        """Exchange the temporary code parameter for an access token.
+
+        Args:
+            code: String temporary authorization code parameter.
+            redirect_uri: String URL to this callback handler.
+            state: String unguessable random string to protect against
+                cross-site request forgery attacks.
+        Returns:
+            String access token or None if an error occurred.
+        """
+        if not isinstance(code, basestring):
+            return None
+        if len(code) <= 0:
+            return None
+
+        payload = urllib.urlencode({
+            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
+            'client_secret': CONFIG[cls.CONFIG_KEY].get('client_secret'),
+            'code': code,
+            'grant_type': 'authorization_code',
+            'redirect_uri': redirect_uri
+        })
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        response = fetch(cls.TOKEN_ENDPOINT,
+                         payload, urlfetch.POST, headers)
+        result = parse_JSON_response(response)
+        if isinstance(result, dict):
+            token = result.get('access_token')
+            if isinstance(token, basestring) and (len(token) > 0):
+                return token
+        return None
+
+    @classmethod
+    def get_user_id(cls, access_token):
+        """Return the LinkedIn user ID using access_token."""
+        if not isinstance(access_token, basestring):
+            return None
+        if len(access_token) <= 0:
+            return None
+
+        headers = {'Authorization': 'Bearer ' + access_token}
+        response = fetch(cls.PROFILE_ENDPOINT, headers=headers)
+        result = parse_JSON_response(response)
+        if isinstance(result, dict):
+            user_id = result.get('id')
+            if isinstance(user_id, basestring) and (len(user_id) > 0):
+                return user_id
+        return None
