@@ -458,7 +458,7 @@ class GitHubCallback(_OAuth2Callback):
             return None
 
         payload = '{"query": "query { viewer { email id login name }}"}'
-        headers = {'Authorization': 'bearer ' + access_token}
+        headers = {'Authorization': 'Bearer ' + access_token}
         response = fetch(cls.PROFILE_ENDPOINT,
                          payload, urlfetch.POST, headers)
         result = parse_JSON_response(response)
