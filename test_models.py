@@ -16,6 +16,29 @@ class JSONSessionTest(test.BaseTestCase):
             # unicode() calls __str__
             self.assertEqual(unicode(session), expected)
 
+    def test_data(self):
+        """Test storing various types of values in a session."""
+        session = models.JSONSession(id='test')
+        session.data = {}
+        expected = {}
+        for key, value in [
+            ('dict', {'foo': 'bar'}),
+            ('list', range(10)),
+            ('str', 'foobar'),
+            ('unicode', u'fo\u00f6b\u00e4r'),
+            ('42', 42),
+            ('42', 42L),
+            ('3.14', 3.14),
+            ('True', True),
+            ('False', False),
+            ('None', None)]:
+            expected[key] = value
+            session.data[key] = value
+            session.put()
+            s = session.key.get()
+            self.assertEqual(s.data, expected)
+            self.assertEqual(s.data[key], value)
+
     def test_create(self):
         """Test creating JSONSession entities."""
         self.assertEqual(models.JSONSession.query().count(), 0)
