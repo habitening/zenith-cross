@@ -635,7 +635,6 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
         if (not isinstance(verifier, basestring)) or (len(verifier) <= 0):
             return self.after_logout()
         secret = self.session.get('oauth_token_secret')
-        # Get the real access token; up to now it was the request token
         access_token, access_secret = self.get_access_token(
             token, secret, verifier)
         if ((not isinstance(access_token, basestring)) or
@@ -680,7 +679,7 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
             nonce: String unique token for the request.
             timestamp: String number of seconds since the Unix epoch at the
                 point the request is generated.
-            token: Optional string access token.
+            token: Optional string OAuth token.
             token_secret: Optional string token secret.
         Returns:
             String OAuth 1.0a HMAC-SHA1 signature for a Twitter HTTP request.
@@ -703,14 +702,13 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
             encoded_value = cls._percent_encode(value)
             encoded_parameters[encoded_key] = encoded_value
 
-        parts = []
         keys = encoded_parameters.keys()
         keys.sort()
-        for key in keys:
-            parts.append(key + '=' + encoded_parameters[key])
-        parameter_string = '&'.join(parts)
+        parameter_string = '&'.join(
+            [key + '=' + encoded_parameters[key] for key in keys])
         print parameter_string
 
+        # Double encoding parameter_string is correct
         base_string = '&'.join([method, cls._percent_encode(base_url),
                                 cls._percent_encode(parameter_string)])
         print base_string
@@ -732,7 +730,7 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
             timestamp: String number of seconds since the Unix epoch at the
                 point the request is generated.
             callback: Optional string URL to this callback handler.
-            token: Optional string access token.
+            token: Optional string OAuth token.
         Returns:
             String Authorization header value for Twitter.
         """
@@ -765,7 +763,7 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
                 or hash parameters.
             parameters: Dictionary of parameters included in the request.
             method: String HTTP method of the request. Must be "GET" or "POST".
-            token: Optional string access token.
+            token: Optional string OAuth token.
             token_secret: Optional string token secret.
         Returns:
             urlfetch._URLFetchResult object to the response or
