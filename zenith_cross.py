@@ -1,10 +1,12 @@
 """webapp2 handlers and helpers to support federated login."""
 
+import base64
 import hashlib
 import hmac
 import json
 import logging
 import os.path
+import time
 import urllib
 import urlparse
 
@@ -227,6 +229,16 @@ class LoginHandler(base_handler.BaseHandler):
             elif provider == 'google':
                 return self.redirect(GoogleCallback.create_login_url(
                     callback_url, state))
+            elif provider == 'twitter':
+                # Twitter uses OAuth 1.0a which means more work
+                auth_url, token, secret = TwitterCallback.create_login_url(
+                    callback_url, state)
+                if isinstance(auth_url, basestring) and (len(auth_url) > 0):
+                    self.session['oauth_token'] = token
+                    self.session['oauth_token_secret'] = secret
+                    return self.redirect(auth_url)
+                else:
+                    break
 
         # Otherwise, unimplemented or unrecognized identity provider
         return self.redirect_to('login')
@@ -586,6 +598,304 @@ class LinkedInCallback(_OAuth2Callback):
         result = parse_JSON_response(response)
         if isinstance(result, dict):
             user_id = result.get('id')
+            if isinstance(user_id, basestring) and (len(user_id) > 0):
+                return user_id
+        return None
+
+class TwitterCallback(base_handler.BaseHandler):
+
+    REQUEST_ENDPOINT = 'https://api.twitter.com/oauth/request_token'
+    """String URL to the Twitter request token endpoint."""
+
+    AUTHORIZATION_ENDPOINT = 'https://api.twitter.com/oauth/authenticate'
+    """String URL to the Twitter authorization endpoint."""
+
+    TOKEN_ENDPOINT = 'https://api.twitter.com/oauth/access_token'
+    """String URL to the Twitter token endpoint."""
+
+    PROFILE_ENDPOINT = '\
+https://api.twitter.com/1.1/account/verify_credentials.json'
+    """String URL to the Twitter public profile endpoint."""
+
+    def get(self):
+        """Handle the Twitter redirect back to us."""
+        if (('error' in self.request.GET) or
+            ('error_description' in self.request.GET)):
+            return self.after_logout()
+
+        token = self.request.GET.get('oauth_token')
+        if (not isinstance(token, basestring)) or (len(token) <= 0):
+            return self.after_logout()
+        expected_token = self.session.get('oauth_token')
+        if token != expected_token:
+            return self.after_logout()
+
+        # Trade for access token and use access token to get user ID
+        verifier = self.request.GET.get('oauth_verifier')
+        if (not isinstance(verifier, basestring)) or (len(verifier) <= 0):
+            return self.after_logout()
+        secret = self.session.get('oauth_token_secret')
+        # Get the real access token; up to now it was the request token
+        access_token, access_secret = self.get_access_token(
+            token, secret, verifier)
+        if ((not isinstance(access_token, basestring)) or
+            (len(access_token) <= 0)):
+            return self.after_logout()
+        if ((not isinstance(access_secret, basestring)) or
+            (len(access_secret) <= 0)):
+            return self.after_logout()
+        user_id = self.get_user_id(access_token, access_secret)
+        if (not isinstance(user_id, basestring)) or (len(user_id) <= 0):
+            return self.after_logout()
+
+        self.session['access_token'] = access_token
+        self.session['access_token_secret'] = access_secret
+        self.session['user_id'] = user_id
+        self.session['hash'] = hash_user_id(
+            user_id, CONFIG['Twitter'].get('method'),
+            CONFIG['Twitter'].get('pepper'), 'twitter_')
+
+        return self.after_login()
+
+    @staticmethod
+    def _percent_encode(s):
+        """Return the string s percent encoded per Twitter specification."""
+        if isinstance(s, str):
+            return urllib.quote(s, '')
+        elif isinstance(s, unicode):
+            return urllib.quote(s.encode('utf-8'), '')
+        else:
+            raise TypeError('s must be a string.')
+
+    @classmethod
+    def _get_signature(cls, base_url, parameters, method, nonce, timestamp,
+                       token='', token_secret=''):
+        """Return the OAuth 1.0a HMAC-SHA1 signature for a HTTP request.
+
+        Args:
+            base_url: String base URL of the endpoint, minus any query string
+                or hash parameters.
+            parameters: Dictionary of parameters included in the request.
+            method: String HTTP method of the request. Must be "GET" or "POST".
+            nonce: String unique token for the request.
+            timestamp: String number of seconds since the Unix epoch at the
+                point the request is generated.
+            token: Optional string access token.
+            token_secret: Optional string token secret.
+        Returns:
+            String OAuth 1.0a HMAC-SHA1 signature for a Twitter HTTP request.
+        """
+        encoded_parameters = dict(
+            [(cls._percent_encode(key), cls._percent_encode(value))
+             for key, value in parameters.iteritems()])
+        for key, value in [
+            ('oauth_consumer_key', CONFIG['Twitter'].get('consumer_key')),
+            ('oauth_nonce', nonce),
+            ('oauth_signature_method', 'HMAC-SHA1'),
+            ('oauth_timestamp', timestamp),
+            ('oauth_token', token),
+            ('oauth_version', '1.0')]:
+            if not isinstance(value, basestring):
+                continue
+            if len(value) <= 0:
+                continue
+            encoded_key = cls._percent_encode(key)
+            encoded_value = cls._percent_encode(value)
+            encoded_parameters[encoded_key] = encoded_value
+
+        parts = []
+        keys = encoded_parameters.keys()
+        keys.sort()
+        for key in keys:
+            parts.append(key + '=' + encoded_parameters[key])
+        parameter_string = '&'.join(parts)
+        print parameter_string
+
+        base_string = '&'.join([method, cls._percent_encode(base_url),
+                                cls._percent_encode(parameter_string)])
+        print base_string
+        signing_key = '&'.join([CONFIG['Twitter'].get('consumer_secret'),
+                                token_secret])
+        print signing_key
+        hmac_obj = hmac.new(signing_key, base_string, hashlib.sha1)
+        print hmac_obj.hexdigest()
+        return base64.b64encode(hmac_obj.digest())
+
+    @classmethod
+    def _get_authorization_header(cls, nonce, signature, timestamp,
+                                  callback='', token=''):
+        """Return the Authorization header value for Twitter.
+
+        Args:
+            nonce: String unique token for the request.
+            signature: String OAuth 1.0a HMAC-SHA1 signature.
+            timestamp: String number of seconds since the Unix epoch at the
+                point the request is generated.
+            callback: Optional string URL to this callback handler.
+            token: Optional string access token.
+        Returns:
+            String Authorization header value for Twitter.
+        """
+        parts = []
+        for key, value in [
+            ('oauth_callback', callback),
+            ('oauth_consumer_key', CONFIG['Twitter'].get('consumer_key')),
+            ('oauth_nonce', nonce),
+            ('oauth_signature', signature),
+            ('oauth_signature_method', 'HMAC-SHA1'),
+            ('oauth_timestamp', timestamp),
+            ('oauth_token', token),
+            ('oauth_version', '1.0')]:
+            if not isinstance(value, basestring):
+                continue
+            if len(value) <= 0:
+                continue
+            parts.append('{0}="{1}"'.format(cls._percent_encode(key),
+                                            cls._percent_encode(value)))
+
+        return 'OAuth ' + ', '.join(parts)
+
+    @classmethod
+    def _twitter_fetch(cls, base_url, parameters, method,
+                       token='', token_secret=''):
+        """Return the response of an OAuth 1.0a HTTP request to Twitter.
+
+        Args:
+            base_url: String base URL of the endpoint, minus any query string
+                or hash parameters.
+            parameters: Dictionary of parameters included in the request.
+            method: String HTTP method of the request. Must be "GET" or "POST".
+            token: Optional string access token.
+            token_secret: Optional string token secret.
+        Returns:
+            urlfetch._URLFetchResult object to the response or
+            None if an error occurred or a response other than 200 was
+            returned.
+        """
+        if not isinstance(base_url, basestring):
+            raise TypeError('base_url must be a non-empty string.')
+        if len(base_url) <= 0:
+            raise ValueError('base_url must be a non-empty string.')
+        if not isinstance(parameters, dict):
+            raise TypeError('parameters must be a dict.')
+        if not isinstance(method, basestring):
+            raise TypeError('method must be "GET" or "POST".')
+        method = method.strip().upper()
+        if method not in ('GET', 'POST'):
+            raise ValueError('method must be "GET" or "POST".')
+
+        timestamp = str(long(time.time()))
+        # oauth_nonce is not used for anything so cheat with the timestamp
+        nonce = 'nonce' + timestamp
+        signature = cls._get_signature(base_url, parameters, method, nonce,
+                                       timestamp, token, token_secret)
+        callback = parameters.get('oauth_callback', '')
+        headers = {
+            'Authorization': cls._get_authorization_header(
+                nonce, signature, timestamp, callback, token)
+        }
+        if method == 'GET':
+            url = base_url + '?' + urllib.urlencode(parameters)
+            return fetch(url, headers=headers)
+        else:
+            headers['Content-Type'] = 'application/x-www-form-urlencoded'
+            return fetch(base_url, urllib.urlencode(parameters),
+                         urlfetch.POST, headers)
+
+    @classmethod
+    def create_login_url(cls, redirect_uri, state):
+        """Return the URL to request a user's Twitter identity.
+
+        Args:
+            redirect_uri: String URL to this callback handler.
+            state: String unguessable random string to protect against
+                cross-site request forgery attacks.
+        Returns:
+            String URL to request a user's Twitter identity
+            String request token which should match oauth_token on callback
+            String token secret
+        """
+        parameters = {
+            'oauth_callback': redirect_uri
+        }
+        response = cls._twitter_fetch(cls.REQUEST_ENDPOINT, parameters, 'POST')
+        result = parse_JSON_response(response)
+        if isinstance(result, dict):
+            if result.get('oauth_callback_confirmed') == 'true':
+                token = result.get('oauth_token')
+                secret = result.get('oauth_token_secret')
+                url = cls.AUTHORIZATION_ENDPOINT
+                url += '?' + urllib.urlencode({'oauth_token': token})
+                return url, token, secret
+        return None, None, None
+
+    @classmethod
+    def get_access_token(cls, token, secret, verifier):
+        """Exchange the request token for an access token.
+
+        Args:
+            token: String request token.
+            secret: String token secret.
+            verifier: String oauth_verifier parameter in the callback.
+        Returns:
+            String access token
+            String token secret
+        """
+        if not isinstance(token, basestring):
+            return None, None
+        if len(token) <= 0:
+            return None, None
+        if not isinstance(secret, basestring):
+            return None, None
+        if len(secret) <= 0:
+            return None, None
+        if not isinstance(verifier, basestring):
+            return None, None
+        if len(verifier) <= 0:
+            return None, None
+
+        parameters = {
+            'oauth_verifier': verifier
+        }
+        response = cls._twitter_fetch(cls.TOKEN_ENDPOINT, parameters, 'POST',
+                                      token, secret)
+        result = parse_JSON_response(response)
+        if isinstance(result, dict):
+            print result
+            token = result.get('oauth_token')
+            secret = result.get('oauth_token_secret')
+            return token, secret
+        return None, None
+
+    @classmethod
+    def get_user_id(cls, token, secret):
+        """Return the Twitter user ID using the access token.
+
+        Args:
+            token: String access token.
+            secret: String token secret.
+        Returns:
+            String Twitter user ID.
+        """
+        if not isinstance(token, basestring):
+            return None
+        if len(token) <= 0:
+            return None
+        if not isinstance(secret, basestring):
+            return None
+        if len(secret) <= 0:
+            return None
+
+        parameters = {
+            'include_entities': 'false',
+            'skip_status': 'true',
+            'include_email': 'false'
+        }
+        response = cls._twitter_fetch(cls.PROFILE_ENDPOINT, parameters, 'GET',
+                                      token, secret)
+        result = parse_JSON_response(response)
+        if isinstance(result, dict):
+            user_id = result.get('id_str')
             if isinstance(user_id, basestring) and (len(user_id) > 0):
                 return user_id
         return None

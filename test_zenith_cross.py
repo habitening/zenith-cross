@@ -54,9 +54,9 @@ class ConfigurationTest(test.BaseTestCase):
 ##            'Twitter': {
 ##                'method': 'sha256',
 ##                'pepper': 'Tweet',
-##                'consumer_key': 'L8qq9PZyRg6ieKGEKhZolGC0vJWLw8iEJ88DRdyOg'
+##                'consumer_key': 'cChZNFj6T5R0TigYB9yd1w',
 ##                'consumer_secret':
-##                'kAcSOqF21Fu85e7zjz7ZN2U4ZRhfV3WpwPAoE3Z7kBw'
+##                'L8qq9PZyRg6ieKGEKhZolGC0vJWLw8iEJ88DRdyOg'
 ##            },
             'webapp2': {
                 'secret_key': 'my-super-secret-key'
@@ -291,3 +291,199 @@ class GoogleTest(test.BaseTestCase):
             self.assertEqual(
                 zenith_cross.GoogleCallback.create_login_url(value, value),
                 users.create_login_url(value))
+
+class TwitterTest(test.BaseTestCase):
+    def setUp(self):
+        """Modify the Twitter configuration for the test."""
+        super(TwitterTest, self).setUp()
+
+        self.key = 'Twitter'
+        """String key to the configuration dictionary."""
+
+        self.original_config = None
+        if self.key in zenith_cross.CONFIG:
+            self.original_config = zenith_cross.CONFIG[self.key].copy()
+
+        zenith_cross.CONFIG[self.key] = {
+            'method': 'sha1',
+            'pepper': 'pepper',
+            'consumer_key': 'cChZNFj6T5R0TigYB9yd1w',
+            'consumer_secret':
+            'L8qq9PZyRg6ieKGEKhZolGC0vJWLw8iEJ88DRdyOg'
+        }
+        """Dictionary configuration to use in the tests."""
+
+        self.redirect_uris = [
+            'foobar', '/foobar', '/foobar/', '/foo/bar',
+            'http://example.com', 'https://example.com'
+        ]
+        """List of string redirect_uri to use in the tests."""
+
+    def tearDown(self):
+        """Restore the Twitter configuration."""
+        super(TwitterTest, self).tearDown()
+
+        if self.original_config is not None:
+            zenith_cross.CONFIG[self.key] = self.original_config
+
+    def test_endpoints(self):
+        """Test the various endpoints are defined and non-empty."""
+        for endpoint in [
+            zenith_cross.TwitterCallback.REQUEST_ENDPOINT,
+            zenith_cross.TwitterCallback.AUTHORIZATION_ENDPOINT,
+            zenith_cross.TwitterCallback.TOKEN_ENDPOINT,
+            zenith_cross.TwitterCallback.PROFILE_ENDPOINT]:
+            self.assertIsInstance(endpoint, basestring)
+            self.assertTrue(endpoint.startswith('https://'))
+
+    def test_percent_encode(self):
+        """Test Twitter percent encoding."""
+        for value in [None, 42, []]:
+            self.assertRaises(
+                TypeError, zenith_cross.TwitterCallback._percent_encode, value)
+        for value, expected in [
+            ('', ''),
+            ('\xe6', '%E6'),
+            ('Ladies + Gentlemen', 'Ladies%20%2B%20Gentlemen'),
+            ('An encoded string!', 'An%20encoded%20string%21'),
+            ('Dogs, Cats & Mice', 'Dogs%2C%20Cats%20%26%20Mice'),
+            (u'\u2603', '%E2%98%83'),
+            ('\xe2\x98\x83', '%E2%98%83')]:
+            self.assertEqual(
+                zenith_cross.TwitterCallback._percent_encode(value), expected)
+
+    def test_get_signature(self):
+        """Test the signing algorithm for Twitter."""
+        # Test the 2 examples in Implementing Sign in with Twitter
+        self.assertEqual(zenith_cross.TwitterCallback._get_signature(
+            'https://api.twitter.com/oauth/request_token',
+            {'oauth_callback': 'http://localhost/sign-in-with-twitter/'},
+            'POST', 'ea9ec8429b68d6b77cd5600adbbb0456', '1318467427'),
+                         'F1Li3tvehgcraF8DMJ7OyxO4w9Y=')
+        self.assertEqual(zenith_cross.TwitterCallback._get_signature(
+            'https://api.twitter.com/oauth/access_token',
+            {'oauth_verifier': 'uw7NjWHT6OJ1MpJOXsHfNxoAhPKpgI8BlYDhxEjIBY'},
+            'POST', 'a9900fe68e2573b27a37f10fbad6a755', '1318467427',
+            'NPcudxy0yU5T3tBzho7iCotZ3cnetKwcTIRlX0iwRl0',
+            'veNRnAWe6inFuo8o2u8SLLZLjolYDmDP7SzL0YfYI'),
+                         '39cipBtIOHEEnybAR4sATQTpl2I=')
+
+        # Test the example in the Creating a signature guide
+        zenith_cross.CONFIG[self.key]['consumer_key'] = '\
+xvz1evFS4wEEPTGEFPHBog'
+        zenith_cross.CONFIG[self.key]['consumer_secret'] = '\
+kAcSOqF21Fu85e7zjz7ZN2U4ZRhfV3WpwPAoE3Z7kBw'
+        self.assertEqual(zenith_cross.TwitterCallback._get_signature(
+            'https://api.twitter.com/1.1/statuses/update.json',
+            {'status': 'Hello Ladies + Gentlemen, a signed OAuth request!',
+             'include_entities': 'true'}, 'POST',
+            'kYjzVBB8Y0ZFabxSWbWovY3uYSQ2pTgmZeNu2VS4cg', '1318622958',
+            token='370773112-GmHxMAgYyLbNEtIKZeRNFsMKPR9EyMZeS9weJAEb',
+            token_secret='LswwdoUaIvS8ltyTt5jkRh4J50vUPVVHtR2YPi5kE'),
+                         'hCtSmYh+iHYCEqBWrE7C7hYmtUk=')
+
+    def test_get_authorization_header(self):
+        """Test building the authorization header for Twitter."""
+        # Test the 2 examples in Implementing Sign in with Twitter
+        self.assertEqual(
+            zenith_cross.TwitterCallback._get_authorization_header(
+                'ea9ec8429b68d6b77cd5600adbbb0456',
+                'F1Li3tvehgcraF8DMJ7OyxO4w9Y=', '1318467427',
+                'http://localhost/sign-in-with-twitter/'), 'OAuth \
+oauth_callback="http%3A%2F%2Flocalhost%2Fsign-in-with-twitter%2F", \
+oauth_consumer_key="cChZNFj6T5R0TigYB9yd1w", \
+oauth_nonce="ea9ec8429b68d6b77cd5600adbbb0456", \
+oauth_signature="F1Li3tvehgcraF8DMJ7OyxO4w9Y%3D", \
+oauth_signature_method="HMAC-SHA1", oauth_timestamp="1318467427", \
+oauth_version="1.0"')
+        self.assertEqual(
+            zenith_cross.TwitterCallback._get_authorization_header(
+                'a9900fe68e2573b27a37f10fbad6a755',
+                '39cipBtIOHEEnybAR4sATQTpl2I=', '1318467427', '',
+                'NPcudxy0yU5T3tBzho7iCotZ3cnetKwcTIRlX0iwRl0'), 'OAuth \
+oauth_consumer_key="cChZNFj6T5R0TigYB9yd1w", \
+oauth_nonce="a9900fe68e2573b27a37f10fbad6a755", \
+oauth_signature="39cipBtIOHEEnybAR4sATQTpl2I%3D", \
+oauth_signature_method="HMAC-SHA1", oauth_timestamp="1318467427", \
+oauth_token="NPcudxy0yU5T3tBzho7iCotZ3cnetKwcTIRlX0iwRl0", \
+oauth_version="1.0"')
+
+        # Test the example in the POST oauth/request_token reference
+        zenith_cross.CONFIG[self.key]['consumer_key'] = '\
+OqEqJeafRSF11jBMStrZz'
+        self.assertEqual(
+            zenith_cross.TwitterCallback._get_authorization_header(
+                'K7ny27JTpKVsTgdyLdDfmQQWVLERj2zAK5BslRsqyw',
+                'Pc+MLdv028fxCErFyi8KXFM+ddU=', '1300228849',
+                callback='http://myapp.com:3005/twitter/process_callback'),
+            'OAuth \
+oauth_callback="http%3A%2F%2Fmyapp.com%3A3005%2Ftwitter%2Fprocess_callback", \
+oauth_consumer_key="OqEqJeafRSF11jBMStrZz", \
+oauth_nonce="K7ny27JTpKVsTgdyLdDfmQQWVLERj2zAK5BslRsqyw", \
+oauth_signature="Pc%2BMLdv028fxCErFyi8KXFM%2BddU%3D", \
+oauth_signature_method="HMAC-SHA1", \
+oauth_timestamp="1300228849", \
+oauth_version="1.0"')
+
+        # Test the example in the Authorizing a request guide
+        zenith_cross.CONFIG[self.key]['consumer_key'] = '\
+xvz1evFS4wEEPTGEFPHBog'
+        self.assertEqual(
+            zenith_cross.TwitterCallback._get_authorization_header(
+                'kYjzVBB8Y0ZFabxSWbWovY3uYSQ2pTgmZeNu2VS4cg',
+                'tnnArxj06cWHq44gCs1OSKk/jLY=', '1318622958',
+                token='370773112-GmHxMAgYyLbNEtIKZeRNFsMKPR9EyMZeS9weJAEb'),
+            'OAuth oauth_consumer_key="xvz1evFS4wEEPTGEFPHBog", \
+oauth_nonce="kYjzVBB8Y0ZFabxSWbWovY3uYSQ2pTgmZeNu2VS4cg", \
+oauth_signature="tnnArxj06cWHq44gCs1OSKk%2FjLY%3D", \
+oauth_signature_method="HMAC-SHA1", oauth_timestamp="1318622958", \
+oauth_token="370773112-GmHxMAgYyLbNEtIKZeRNFsMKPR9EyMZeS9weJAEb", \
+oauth_version="1.0"')
+
+    def test_twitter_fetch(self):
+        """Test making a HTTP request to Twitter with OAuth 1.0a."""
+        for value in [None, 42, []]:
+            self.assertRaises(
+                TypeError, zenith_cross.TwitterCallback._twitter_fetch,
+                value, {}, 'GET')
+            self.assertRaises(
+                TypeError, zenith_cross.TwitterCallback._twitter_fetch,
+                'http://example.com', value, 'POST')
+            self.assertRaises(
+                TypeError, zenith_cross.TwitterCallback._twitter_fetch,
+                'http://example.com', {}, value)
+        self.assertRaises(
+            ValueError, zenith_cross.TwitterCallback._twitter_fetch,
+            '', {}, 'POST')
+        for value in ['', 'HEAD', 'PUT', 'DELETE', 'PATCH']:
+            self.assertRaises(
+                ValueError, zenith_cross.TwitterCallback._twitter_fetch,
+                'http://example.com', {}, value)
+
+    def test_create_login_url(self):
+        """Test the URL to request a user's Twitter identity."""
+        for value in self.redirect_uris:
+            self.assertEqual(zenith_cross.TwitterCallback.create_login_url(
+                value, value), (None, None, None))
+
+    def test_get_access_token(self):
+        """Test trading the request token for an access token."""
+        for value in [None, 42, '', []]:
+            self.assertEqual(zenith_cross.TwitterCallback.get_access_token(
+                value, 'secret', 'verifier'), (None, None))
+            self.assertEqual(zenith_cross.TwitterCallback.get_access_token(
+                'token', value, 'verifier'), (None, None))
+            self.assertEqual(zenith_cross.TwitterCallback.get_access_token(
+                'token', 'secret', value), (None, None))
+        self.assertEqual(zenith_cross.TwitterCallback.get_access_token(
+            'token', 'secret', 'verifier'), (None, None))
+
+    def test_get_user_id(self):
+        """Test getting the Twitter user ID using an access token."""
+        for value in [None, 42, '', []]:
+            self.assertIsNone(zenith_cross.TwitterCallback.get_user_id(
+                value, 'secret'))
+            self.assertIsNone(zenith_cross.TwitterCallback.get_user_id(
+                'token', value))
+        self.assertIsNone(zenith_cross.TwitterCallback.get_user_id(
+            'token', 'secret'))
