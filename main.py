@@ -101,10 +101,12 @@ _config = {
 
 app = webapp2.WSGIApplication([
     routes.PathPrefixRoute(r'/login', [
+        # The redirect_uri for each identity provider
         webapp2.Route(r'/github', handler=zenith_cross.GitHubCallback,
                       name='github_callback'),
         webapp2.Route(r'/google', handler=zenith_cross.GoogleCallback,
                       name='google_callback'),
+        # Default to the identity provider selection page
         webapp2.Route('/', handler=zenith_cross.LoginHandler, name='login')
     ]),
     webapp2.Route(r'/logout', handler=zenith_cross.LogoutHandler,
