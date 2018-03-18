@@ -817,7 +817,9 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
             'oauth_callback': redirect_uri
         }
         response = cls._twitter_fetch(cls.REQUEST_ENDPOINT, parameters, 'POST')
-        result = parse_JSON_response(response)
+        if response is None:
+            return None, None, None
+        result = urlparse.parse_qs(response.content)
         if isinstance(result, dict):
             if result.get('oauth_callback_confirmed') == 'true':
                 token = result.get('oauth_token')
@@ -857,7 +859,9 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
         }
         response = cls._twitter_fetch(cls.TOKEN_ENDPOINT, parameters, 'POST',
                                       token, secret)
-        result = parse_JSON_response(response)
+        if response is None:
+            return None, None
+        result = urlparse.parse_qs(response.content)
         if isinstance(result, dict):
             print result
             token = result.get('oauth_token')
