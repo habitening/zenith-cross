@@ -243,9 +243,21 @@ class LoginHandler(base_handler.BaseHandler):
         # Otherwise, unimplemented or unrecognized identity provider
         return self.redirect_to('login')
 
-class _OAuth2Callback(base_handler.BaseHandler):
+class LinkedInCallback(base_handler.BaseHandler):
 
     """Superclass for callback handlers based on OAuth 2.0."""
+
+    CONFIG_KEY = 'LinkedIn'
+    """String key for the LinkedIn configuration dictionary."""
+
+    AUTHORIZATION_ENDPOINT = 'https://www.linkedin.com/oauth/v2/authorization'
+    """String URL to the LinkedIn authorization endpoint."""
+
+    TOKEN_ENDPOINT = 'https://www.linkedin.com/oauth/v2/accessToken'
+    """String URL to the LinkedIn token endpoint."""
+
+    PROFILE_ENDPOINT = 'https://api.linkedin.com/v1/people/~?format=json'
+    """String URL to the LinkedIn basic profile endpoint."""
 
     def get(self):
         """Handle the redirect back to us."""
@@ -280,7 +292,80 @@ class _OAuth2Callback(base_handler.BaseHandler):
 
         return self.after_login()
 
-class FacebookCallback(_OAuth2Callback):
+    @classmethod
+    def create_login_url(cls, redirect_uri, state):
+        """Return the URL to request a user's LinkedIn identity.
+
+        Args:
+            redirect_uri: String URL to this callback handler.
+            state: String unguessable random string to protect against
+                cross-site request forgery attacks.
+        Returns:
+            String URL to request a user's LinkedIn identity.
+        """
+        parameters = {
+            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
+            'redirect_uri': redirect_uri,
+            'response_type': 'code',
+            'scope': 'r_basicprofile',
+            'state': state
+        }
+        return cls.AUTHORIZATION_ENDPOINT + '?' + urllib.urlencode(parameters)
+
+    @classmethod
+    def get_access_token(cls, code, redirect_uri, state):
+        """Exchange the temporary code parameter for an access token.
+
+        Args:
+            code: String temporary authorization code parameter.
+            redirect_uri: String URL to this callback handler.
+            state: String unguessable random string to protect against
+                cross-site request forgery attacks.
+        Returns:
+            String access token or None if an error occurred.
+        """
+        if not isinstance(code, basestring):
+            return None
+        if len(code) <= 0:
+            return None
+
+        payload = urllib.urlencode({
+            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
+            'client_secret': CONFIG[cls.CONFIG_KEY].get('client_secret'),
+            'code': code,
+            'grant_type': 'authorization_code',
+            'redirect_uri': redirect_uri
+        })
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        response = fetch(cls.TOKEN_ENDPOINT,
+                         payload, urlfetch.POST, headers)
+        result = parse_JSON_response(response)
+        if isinstance(result, dict):
+            token = result.get('access_token')
+            if isinstance(token, basestring) and (len(token) > 0):
+                return token
+        return None
+
+    @classmethod
+    def get_user_id(cls, access_token):
+        """Return the LinkedIn user ID using access_token."""
+        if not isinstance(access_token, basestring):
+            return None
+        if len(access_token) <= 0:
+            return None
+
+        headers = {'Authorization': 'Bearer ' + access_token}
+        response = fetch(cls.PROFILE_ENDPOINT, headers=headers)
+        result = parse_JSON_response(response)
+        if isinstance(result, dict):
+            user_id = result.get('id')
+            if isinstance(user_id, basestring) and (len(user_id) > 0):
+                return user_id
+        return None
+
+class FacebookCallback(LinkedInCallback):
 
     CONFIG_KEY = 'Facebook'
     """String key for the Facebook configuration dictionary."""
@@ -388,7 +473,7 @@ class FacebookCallback(_OAuth2Callback):
                 return user_id
         return None
 
-class GitHubCallback(_OAuth2Callback):
+class GitHubCallback(LinkedInCallback):
 
     CONFIG_KEY = 'GitHub'
     """String key for the GitHub configuration dictionary."""
@@ -514,93 +599,6 @@ class GoogleCallback(base_handler.BaseHandler):
         """
         # Delegate to the App Engine Users API
         return users.create_login_url(redirect_uri)
-
-class LinkedInCallback(_OAuth2Callback):
-
-    CONFIG_KEY = 'LinkedIn'
-    """String key for the LinkedIn configuration dictionary."""
-
-    AUTHORIZATION_ENDPOINT = 'https://www.linkedin.com/oauth/v2/authorization'
-    """String URL to the LinkedIn authorization endpoint."""
-
-    TOKEN_ENDPOINT = 'https://www.linkedin.com/oauth/v2/accessToken'
-    """String URL to the LinkedIn token endpoint."""
-
-    PROFILE_ENDPOINT = 'https://api.linkedin.com/v1/people/~?format=json'
-    """String URL to the LinkedIn basic profile endpoint."""
-
-    @classmethod
-    def create_login_url(cls, redirect_uri, state):
-        """Return the URL to request a user's LinkedIn identity.
-
-        Args:
-            redirect_uri: String URL to this callback handler.
-            state: String unguessable random string to protect against
-                cross-site request forgery attacks.
-        Returns:
-            String URL to request a user's LinkedIn identity.
-        """
-        parameters = {
-            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
-            'redirect_uri': redirect_uri,
-            'response_type': 'code',
-            'scope': 'r_basicprofile',
-            'state': state
-        }
-        return cls.AUTHORIZATION_ENDPOINT + '?' + urllib.urlencode(parameters)
-
-    @classmethod
-    def get_access_token(cls, code, redirect_uri, state):
-        """Exchange the temporary code parameter for an access token.
-
-        Args:
-            code: String temporary authorization code parameter.
-            redirect_uri: String URL to this callback handler.
-            state: String unguessable random string to protect against
-                cross-site request forgery attacks.
-        Returns:
-            String access token or None if an error occurred.
-        """
-        if not isinstance(code, basestring):
-            return None
-        if len(code) <= 0:
-            return None
-
-        payload = urllib.urlencode({
-            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
-            'client_secret': CONFIG[cls.CONFIG_KEY].get('client_secret'),
-            'code': code,
-            'grant_type': 'authorization_code',
-            'redirect_uri': redirect_uri
-        })
-        headers = {
-            'Content-Type': 'application/x-www-form-urlencoded'
-        }
-        response = fetch(cls.TOKEN_ENDPOINT,
-                         payload, urlfetch.POST, headers)
-        result = parse_JSON_response(response)
-        if isinstance(result, dict):
-            token = result.get('access_token')
-            if isinstance(token, basestring) and (len(token) > 0):
-                return token
-        return None
-
-    @classmethod
-    def get_user_id(cls, access_token):
-        """Return the LinkedIn user ID using access_token."""
-        if not isinstance(access_token, basestring):
-            return None
-        if len(access_token) <= 0:
-            return None
-
-        headers = {'Authorization': 'Bearer ' + access_token}
-        response = fetch(cls.PROFILE_ENDPOINT, headers=headers)
-        result = parse_JSON_response(response)
-        if isinstance(result, dict):
-            user_id = result.get('id')
-            if isinstance(user_id, basestring) and (len(user_id) > 0):
-                return user_id
-        return None
 
 class TwitterCallback(base_handler.BaseHandler):
 
