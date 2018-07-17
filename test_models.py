@@ -34,6 +34,7 @@ class JSONSessionTest(test.BaseTestCase):
             ('None', None)]:
             expected[key] = value
             session.data[key] = value
+            self.assertEqual(session.data, expected)
             session.put()
             s = session.key.get()
             self.assertEqual(s.data, expected)
@@ -57,10 +58,16 @@ class JSONSessionTest(test.BaseTestCase):
         empty_session.data = {'bar': 'baz'}
         empty_session.put()
         self.assertEqual(models.JSONSession.query().count(), 2)
-        self.assertLess(empty_session.created, empty_session.modified)
+        session = empty_session.key.get()
+        self.assertEqual(session.data, {'bar': 'baz'})
+        self.assertLess(session.created, session.modified)
 
     def test_delete_created_before(self):
         """Test deleting JSONSession entities created prior to a datetime."""
+        for value in [None, 42, '', []]:
+            self.assertRaises(
+                TypeError, models.JSONSession.delete_created_before, value)
+
         self.test_create()
         sessions = models.JSONSession.query().fetch()
         self.assertEqual(len(sessions), 2)
@@ -73,6 +80,10 @@ class JSONSessionTest(test.BaseTestCase):
 
     def test_delete_modified_before(self):
         """Test deleting JSONSession entities modified prior to a datetime."""
+        for value in [None, 42, '', []]:
+            self.assertRaises(
+                TypeError, models.JSONSession.delete_modified_before, value)
+
         self.test_create()
         sessions = models.JSONSession.query().fetch()
         self.assertEqual(len(sessions), 2)
@@ -94,12 +105,11 @@ class JSONSessionTest(test.BaseTestCase):
 
     def test_is_valid_sid(self):
         """Test if a session ID is valid."""
-        for value in [None, 42, '', [], 'foobar', u'fo\u00f6b\u00e4r']:
+        valid_sid = 'a' * 128
+        for value in [None, 42, '', [], 'foobar', u'fo\u00f6b\u00e4r',
+                      '@' + valid_sid[1:], valid_sid[:-1] + '@']:
             self.assertFalse(models.JSONSession._is_valid_sid(value))
-        expected = 'a' * 128
-        self.assertTrue(models.JSONSession._is_valid_sid(expected))
-        for value in ['@' + expected[1:], expected[:-1] + '@']:
-            self.assertFalse(models.JSONSession._is_valid_sid(value))
+        self.assertTrue(models.JSONSession._is_valid_sid(valid_sid))
 
 class DummyResponse(object):
 
@@ -117,11 +127,11 @@ class DummyResponse(object):
         """Integer number of times delete_cookie() is called."""
 
     def set_cookie(self, *args, **kwargs):
-        """Increment the count times this method is called."""
+        """Increment the number of times this method is called."""
         self.set_cookie_count += 1
 
     def delete_cookie(self, *args, **kwargs):
-        """Increment the count times this method is called."""
+        """Increment the number of times this method is called."""
         self.delete_cookie_count += 1
 
 class DummyStore(object):
@@ -176,7 +186,9 @@ class JSONSessionFactoryTest(test.BaseTestCase):
             self.assertEqual(dict(session), {'foo': 'bar'})
             self.assertEqual(dict(session), dict(factory.get_session()))
 
+        self.assertEqual(models.JSONSession.query().count(), 0)
         foobar_session = models.JSONSession._create({'foo': 'bar'})
+        self.assertEqual(models.JSONSession.query().count(), 1)
         factory = models.JSONSessionFactory(
             'factory', DummyStore(foobar_session.key.string_id()))
         self.assertEqual(models.JSONSession.query().count(), 1)
@@ -359,6 +371,7 @@ class JSONSessionFactoryTest(test.BaseTestCase):
         self.assertTrue(factory.session.modified)
         self.assertEqual(dict(factory.session), {'foo': 'bar'})
         factory.save_session(response)
+        # Create a new JSONSession to store the session
         self.assertEqual(models.JSONSession.query().count(), 2)
         self.assertNotEqual(factory.sid, sid)
         for session in models.JSONSession.query().fetch():

@@ -17,8 +17,8 @@ class JSONSession(ndb.Model):
             serialization is superior (human readable and more portable) to
             binary serialization
         unnecessary memcache calls are removed because NDB already caches
-            entities in memcache and caching more items in memcache just
-            increases the chance of eviction
+            entities in memcache and caching more items just increases the
+            chance of eviction
         get_by_sid() is removed because get_by_id() already does the same thing
         create the entity in a transaction to make sure the ID is unique and
             to avoid session fixation
@@ -177,16 +177,16 @@ class JSONSessionFactory(sessions.CustomBackendSessionFactory):
             return
 
         if not self.session.modified:
-            # Defer saving the session until the next time it is modified
+            # Avoid needlessly saving unmodified sessions
             return
 
         session_data = dict(self.session)
         if ((not self.session.new) and
             self.session_model._is_valid_sid(self.sid)):
-            # Update the existing entity
             key = ndb.Key(self.session_model, self.sid)
             backing = key.get()
             if isinstance(backing, self.session_model):
+                # Update the existing JSONSession entity
                 backing.data = session_data
                 backing.put()
                 return
