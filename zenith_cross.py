@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import os.path
 import time
 import urllib
@@ -20,72 +21,7 @@ import yaml
 
 import base_handler
 
-_PATH_TO_CONFIG = os.path.abspath(os.path.join(os.path.dirname(__file__),
-                                               'config.yaml'))
-"""String path to the YAML configuration file."""
-
-_PROVIDERS = frozenset(['Facebook', 'GitHub', 'Google'])
-"""Set of string keys of the implemented identity providers."""
-
-def _parse_config(path, required_keys=['webapp2']):
-    """Return a configuration dictionary parsed from the YAML file at path.
-
-    Args:
-        path: String ASCII path to the YAML configuration file.
-        required_keys: Iterable of string required keys in the configuration
-            dictionary.
-    Raises:
-        IndexError if a required key is missing from the configuration
-        dictionary.
-    Returns:
-        Configuration dictionary parsed from the YAML file at path.
-    """
-    if not isinstance(path, str):
-        raise TypeError('path must be a valid ASCII path to a YAML file.')
-    if not os.path.isfile(path):
-        raise ValueError('path must be a valid ASCII path to a YAML file.')
-
-    config = {}
-    with open(path, 'r') as yaml_file:
-        try:
-            for document in yaml.safe_load_all(yaml_file):
-                if isinstance(document, dict):
-                    config = document
-                    break
-        except yaml.YAMLError:
-            pass
-
-    expected = list(_PROVIDERS)
-    for key in required_keys:
-        if not isinstance(key, basestring):
-            continue
-        if len(key) <= 0:
-            continue
-        expected.append(key)
-        if key not in config:
-            raise IndexError(
-                'Missing required key in CONFIG: {0}'.format(key))
-
-    expected = frozenset(expected)
-    # Cannot use iterkeys() because we are modifying the dictionary
-    for provider in config.keys():
-        # Remove unimplemented or unrecognized identity providers
-        if provider not in expected:
-            del config[provider]
-            continue
-        # Force a configuration value to be a string
-        for key, value in config[provider].iteritems():
-            if isinstance(value, bool):
-                config[provider][key] = str(value).lower()
-            elif isinstance(value, (int, long, float)):
-                config[provider][key] = str(value)
-
-    return config
-
-CONFIG = _parse_config(_PATH_TO_CONFIG)
-"""Configuration dictionary."""
-
-def fetch(url, payload=None, method=urlfetch.GET, headers={}, deadline=5):
+def _fetch_url(url, payload=None, method=urlfetch.GET, headers={}, deadline=5):
     """Return the response from fetching url or None.
 
     This is a wrapper around urlfetch.fetch() with error checks.
@@ -125,7 +61,7 @@ def fetch(url, payload=None, method=urlfetch.GET, headers={}, deadline=5):
     else:
         return None
 
-def parse_JSON_response(response, default=None):
+def _parse_JSON_response(response, default=None):
     """Return the JSON object in response or default."""
     if response is None:
         return default
@@ -140,7 +76,7 @@ def parse_JSON_response(response, default=None):
             return result
     return default
 
-def hash_user_id(user_id, method, pepper=None, prefix=None):
+def _hash_user_id(user_id, method, pepper=None, prefix=None):
     """Return user_id hashed with method and optionally pepper.
 
     This function alters the string user ID from an identity provider so it is
@@ -167,10 +103,10 @@ def hash_user_id(user_id, method, pepper=None, prefix=None):
         raise TypeError('user_id must be a non-empty string.')
     if len(user_id) <= 0:
         raise ValueError('user_id must be a non-empty string.')
-    if not isinstance(method, basestring):
-        raise TypeError('method must be a non-empty string.')
+    if not isinstance(method, str):
+        raise TypeError('method must be a non-empty ASCII string.')
     if len(method) <= 0:
-        raise ValueError('method must be a non-empty string.')
+        raise ValueError('method must be a non-empty ASCII string.')
 
     hashed_id = security.hash_password(user_id, method, pepper=pepper)
     if isinstance(prefix, str) and (len(prefix) > 0):
@@ -179,146 +115,145 @@ def hash_user_id(user_id, method, pepper=None, prefix=None):
         return hashed_id
 
 
-class LogoutHandler(base_handler.BaseHandler):
-    def get(self):
-        """Discard the session."""
-        self.session['_logout'] = True
-        return self.after_logout()
+class GoogleFlow(object):
 
-class LoginHandler(base_handler.BaseHandler):
+    """Simplest authentication flow with the fewest parameters."""
 
-    """Handler for the identity provider selection page.
+    def __init__(self, method, pepper):
+        """Initialize this authentication flow.
 
-    This is called the NASCAR screen in FirebaseUI due to the way the identity
-    provider buttons look like the sponsor decals on the cars.
-    """
+        Args:
+            method: String ASCII name of a method from hashlib to use to hash
+                the user ID.
+            pepper: String ASCII secret constant stored in the configuration.
+        """
+        if not isinstance(method, str):
+            raise TypeError('method must be a non-empty ASCII string.')
+        if len(method) <= 0:
+            raise ValueError('method must be a non-empty ASCII string.')
+        if not isinstance(pepper, str):
+            raise TypeError('pepper must be a non-empty ASCII string.')
+        if len(pepper) <= 0:
+            raise ValueError('pepper must be a non-empty ASCII string.')
 
-    def get(self):
-        """Show a form with the available identity providers alphabetically."""
-        values = {
-            'providers': sorted([key for key in CONFIG.iterkeys()
-                                 if key in _PROVIDERS])
-        }
-        self.render_template('login.html', values)
+        self.method = method
+        """String name of a method from hashlib to use to hash the user ID."""
 
-    def post(self):
-        """Redirect the user to the selected identity provider."""
-        for key in CONFIG.iterkeys():
-            provider = key.strip().lower()
-            if ('provider:' + provider) not in self.request.POST:
-                continue
+        self.pepper = pepper
+        """String secret constant to add to the hash of the user ID."""
 
-            if self.app.debug:
-                # The development web server does not support HTTPS
-                scheme = 'http'
-            else:
-                scheme = 'https'
-            callback_url = self.uri_for(provider + '_callback',
-                                        _scheme=scheme)
-            state = security.generate_random_string(
-                length=32, pool=security.ALPHANUMERIC)
-            # Store the state in the session so it can be verified on callback
-            # It is not a secret because it is exposed in the redirect
-            self.session['state'] = state
-            if provider == 'facebook':
-                return self.redirect(FacebookCallback.create_login_url(
-                    callback_url, state))
-            elif provider == 'github':
-                return self.redirect(GitHubCallback.create_login_url(
-                    callback_url, state))
-            elif provider == 'google':
-                return self.redirect(GoogleCallback.create_login_url(
-                    callback_url, state))
-            elif provider == 'twitter':
-                # Twitter uses OAuth 1.0a which means more work
-                auth_url, token, secret = TwitterCallback.create_login_url(
-                    callback_url, state)
-                if isinstance(auth_url, basestring) and (len(auth_url) > 0):
-                    self.session['oauth_token'] = token
-                    self.session['oauth_token_secret'] = secret
-                    return self.redirect(auth_url)
-                else:
-                    break
+    def get_name(self):
+        """Return the string name of this identity provider."""
+        return 'Google'
 
-        # Otherwise, unimplemented or unrecognized identity provider
-        return self.redirect_to('login')
+    def create_login_url(self, redirect_uri, **kwargs):
+        """Return the URL to request a user's Google identity.
 
-class LinkedInCallback(base_handler.BaseHandler):
+        Args:
+            redirect_uri: String URI to the callback handler.
+        Returns:
+            String URL to request a user's Google identity.
+        """
+        # Delegate to the App Engine Users API
+        return users.create_login_url(redirect_uri)
 
-    """Superclass for callback handlers based on OAuth 2.0."""
+    def _get_user_id(self, **kwargs):
+        """Return the Google user ID."""
+        current_user = users.get_current_user()
+        if isinstance(current_user, users.User):
+            user_id = current_user.user_id()
+            if isinstance(user_id, basestring) and (len(user_id) > 0):
+                return user_id
+        return None
 
-    CONFIG_KEY = 'LinkedIn'
-    """String key for the LinkedIn configuration dictionary."""
+    def get_hashed_user_id(self, user_id=None, **kwargs):
+        """Return the hashed user ID.
 
-    AUTHORIZATION_ENDPOINT = 'https://www.linkedin.com/oauth/v2/authorization'
-    """String URL to the LinkedIn authorization endpoint."""
-
-    TOKEN_ENDPOINT = 'https://www.linkedin.com/oauth/v2/accessToken'
-    """String URL to the LinkedIn token endpoint."""
-
-    PROFILE_ENDPOINT = 'https://api.linkedin.com/v1/people/~?format=json'
-    """String URL to the LinkedIn basic profile endpoint."""
-
-    def get(self):
-        """Handle the redirect back to us."""
-        if (('error' in self.request.GET) or
-            ('error_description' in self.request.GET)):
-            return self.after_logout()
-
-        state = self.request.GET.get('state')
-        if (not isinstance(state, basestring)) or (len(state) <= 0):
-            return self.after_logout()
-        expected_state = self.session.get('state')
-        if state != expected_state:
-            return self.after_logout()
-
-        # Trade code for access token and use access token to get user ID
-        code = self.request.GET.get('code')
-        if (not isinstance(code, basestring)) or (len(code) <= 0):
-            return self.after_logout()
-        token = self.get_access_token(code, self.request.path_url, state)
-        if (not isinstance(token, basestring)) or (len(token) <= 0):
-            return self.after_logout()
-        user_id = self.get_user_id(token)
+        Args:
+            user_id: Optional string user ID to hash.
+        """
         if (not isinstance(user_id, basestring)) or (len(user_id) <= 0):
-            return self.after_logout()
+            user_id = self._get_user_id(**kwargs)
+        if isinstance(user_id, basestring) and (len(user_id) > 0):
+            return _hash_user_id(user_id, self.method, self.pepper,
+                                 self.get_name().lower() + '_')
+        return None
 
-        self.session['access_token'] = token
-        self.session['user_id'] = user_id
-        self.session['hash'] = hash_user_id(
-            user_id, CONFIG[self.CONFIG_KEY].get('method'),
-            CONFIG[self.CONFIG_KEY].get('pepper'),
-            self.CONFIG_KEY.lower() + '_')
+class LinkedInFlow(GoogleFlow):
 
-        return self.after_login()
+    """The truest OAuth 2.0 implementation."""
 
-    @classmethod
-    def create_login_url(cls, redirect_uri, state):
+    def __init__(self, method, pepper, client_id, client_secret):
+        """Initialize this authentication flow.
+
+        Args:
+            method: String ASCII name of a method from hashlib to use to hash
+                the user ID.
+            pepper: String ASCII secret constant stored in the configuration.
+            client_id: String "API Key" value generated when you registered
+                your application.
+            client_secret: String "Secret Key" value generated when you
+                registered your application.
+        """
+        if not isinstance(client_id, str):
+            raise TypeError('client_id must be a non-empty ASCII string.')
+        if len(client_id) <= 0:
+            raise ValueError('client_id must be a non-empty ASCII string.')
+        if not isinstance(client_secret, str):
+            raise TypeError('client_secret must be a non-empty ASCII string.')
+        if len(client_secret) <= 0:
+            raise ValueError('client_secret must be a non-empty ASCII string.')
+        super(LinkedInFlow, self).__init__(method, pepper)
+
+        self.client_id = client_id
+        """String "API Key" value generated when you registered."""
+
+        self.client_secret = client_secret
+        """String "Secret Key" value generated when you registered."""
+
+    def get_name(self):
+        """Return the string name of this identity provider."""
+        return 'LinkedIn'
+
+    def get_authorization_endpoint(self):
+        """Return the string URL to the LinkedIn authorization endpoint."""
+        return 'https://www.linkedin.com/oauth/v2/authorization'
+
+    def get_token_endpoint(self):
+        """Return the string URL to the LinkedIn token endpoint."""
+        return 'https://www.linkedin.com/oauth/v2/accessToken'
+
+    def get_profile_endpoint(self):
+        """Return the string URL to the LinkedIn basic profile endpoint."""
+        return 'https://api.linkedin.com/v1/people/~?format=json'
+
+    def create_login_url(self, redirect_uri, state):
         """Return the URL to request a user's LinkedIn identity.
 
         Args:
-            redirect_uri: String URL to this callback handler.
+            redirect_uri: String URI to the callback handler.
             state: String unguessable random string to protect against
                 cross-site request forgery attacks.
         Returns:
             String URL to request a user's LinkedIn identity.
         """
         parameters = {
-            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
+            'client_id': self.client_id,
             'redirect_uri': redirect_uri,
             'response_type': 'code',
             'scope': 'r_basicprofile',
             'state': state
         }
-        return cls.AUTHORIZATION_ENDPOINT + '?' + urllib.urlencode(parameters)
+        url = self.get_authorization_endpoint() + '?'
+        url += urllib.urlencode(parameters)
+        return url
 
-    @classmethod
-    def get_access_token(cls, code, redirect_uri, state):
+    def get_access_token(self, code, redirect_uri, state):
         """Exchange the temporary code parameter for an access token.
 
         Args:
             code: String temporary authorization code parameter.
-            redirect_uri: String URL to this callback handler.
+            redirect_uri: String URI to the callback handler.
             state: String unguessable random string to protect against
                 cross-site request forgery attacks.
         Returns:
@@ -330,8 +265,8 @@ class LinkedInCallback(base_handler.BaseHandler):
             return None
 
         payload = urllib.urlencode({
-            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
-            'client_secret': CONFIG[cls.CONFIG_KEY].get('client_secret'),
+            'client_id': self.client_id,
+            'client_secret': self.client_secret,
             'code': code,
             'grant_type': 'authorization_code',
             'redirect_uri': redirect_uri
@@ -339,80 +274,81 @@ class LinkedInCallback(base_handler.BaseHandler):
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded'
         }
-        response = fetch(cls.TOKEN_ENDPOINT,
-                         payload, urlfetch.POST, headers)
-        result = parse_JSON_response(response)
+        response = _fetch_url(self.get_token_endpoint(),
+                              payload, urlfetch.POST, headers)
+        result = _parse_JSON_response(response)
         if isinstance(result, dict):
             token = result.get('access_token')
             if isinstance(token, basestring) and (len(token) > 0):
                 return token
         return None
 
-    @classmethod
-    def get_user_id(cls, access_token):
-        """Return the LinkedIn user ID using access_token."""
+    def _get_user_id(cls, access_token):
+        """Return the LinkedIn user ID using access_token.
+
+        Args:
+            access_token: String access token.
+        Returns:
+            String LinkedIn user ID.
+        """
         if not isinstance(access_token, basestring):
             return None
         if len(access_token) <= 0:
             return None
 
         headers = {'Authorization': 'Bearer ' + access_token}
-        response = fetch(cls.PROFILE_ENDPOINT, headers=headers)
-        result = parse_JSON_response(response)
+        response = _fetch_url(self.get_profile_endpoint(), headers=headers)
+        result = _parse_JSON_response(response)
         if isinstance(result, dict):
             user_id = result.get('id')
             if isinstance(user_id, basestring) and (len(user_id) > 0):
                 return user_id
         return None
 
-class FacebookCallback(LinkedInCallback):
+class FacebookFlow(LinkedInFlow):
+    def get_name(self):
+        """Return the string name of this identity provider."""
+        return 'Facebook'
 
-    CONFIG_KEY = 'Facebook'
-    """String key for the Facebook configuration dictionary."""
+    def get_authorization_endpoint(self):
+        """Return the string URL to the Facebook authorization endpoint."""
+        return 'https://www.facebook.com/v2.12/dialog/oauth'
 
-    AUTHORIZATION_ENDPOINT = 'https://www.facebook.com/v2.12/dialog/oauth'
-    """String URL to the Facebook authorization endpoint."""
+    def get_token_endpoint(self):
+        """Return the string URL to the Facebook token endpoint."""
+        return 'https://graph.facebook.com/v2.12/oauth/access_token'
 
-    TOKEN_ENDPOINT = 'https://graph.facebook.com/v2.12/oauth/access_token'
-    """String URL to the Facebook token endpoint."""
+    def get_profile_endpoint(self):
+        """Return the string URL to the Facebook public profile endpoint."""
+        return 'https://graph.facebook.com/v2.12/me'
 
-    PROFILE_ENDPOINT = 'https://graph.facebook.com/v2.12/me'
-    """String URL to the Facebook public profile endpoint."""
-
-    def get(self):
-        """Handle the Facebook redirect back to us."""
-        if 'error_reason' in self.request.GET:
-            # Facebook includes an extra error_reason parameter
-            return self.after_logout()
-        return super(FacebookCallback, self).get()
-
-    @classmethod
-    def create_login_url(cls, redirect_uri, state):
+    def create_login_url(self, redirect_uri, state):
         """Return the URL to request a user's Facebook identity.
 
         Args:
-            redirect_uri: String URL to this callback handler.
+            redirect_uri: String URI to the callback handler.
             state: String unguessable random string to protect against
                 cross-site request forgery attacks.
         Returns:
             String URL to request a user's Facebook identity.
         """
         parameters = {
-            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
+            'client_id': self.client_id,
             'redirect_uri': redirect_uri,
             'response_type': 'code',
             'scope': 'public_profile',
             'state': state
         }
-        return cls.AUTHORIZATION_ENDPOINT + '?' + urllib.urlencode(parameters)
+        url = self.get_authorization_endpoint() + '?'
+        url += urllib.urlencode(parameters)
+        return url
 
-    @classmethod
-    def get_access_token(cls, code, redirect_uri, state):
+    def get_access_token(self, code, redirect_uri, state):
         """Exchange the temporary code parameter for an access token.
 
         Args:
             code: String temporary authorization code parameter.
-            redirect_uri: String URL to this callback handler.
+            redirect_uri: String URI to the callback handler.
             state: String unguessable random string to protect against
                 cross-site request forgery attacks.
         Returns:
@@ -424,36 +360,40 @@ class FacebookCallback(LinkedInCallback):
             return None
 
         parameters = {
-            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
-            'client_secret': CONFIG[cls.CONFIG_KEY].get('client_secret'),
+            'client_id': self.client_id,
+            'client_secret': self.client_secret,
             'code': code,
             'redirect_uri': redirect_uri
         }
-        url = cls.TOKEN_ENDPOINT + '?' + urllib.urlencode(parameters)
-        response = fetch(url)
-        result = parse_JSON_response(response)
+        url = self.get_token_endpoint() + '?' + urllib.urlencode(parameters)
+        response = _fetch_url(url)
+        result = _parse_JSON_response(response)
         if isinstance(result, dict):
             token = result.get('access_token')
             if isinstance(token, basestring) and (len(token) > 0):
                 return token
         return None
 
-    @classmethod
-    def get_appsecret_proof(cls, access_token):
+    def _get_appsecret_proof(self, access_token):
         """Return the app secret proof to verify a Graph API call.
 
         Args:
-            access_token: String access token
+            access_token: String access token.
         Returns:
             String hex digest of the sha256 hash of access_token,
             using the app secret as the key.
         """
-        return hmac.new(CONFIG[cls.CONFIG_KEY].get('client_secret'),
-                        access_token, hashlib.sha256).hexdigest()
+        return hmac.new(self.client_secret, access_token,
+                        hashlib.sha256).hexdigest()
 
-    @classmethod
-    def get_user_id(cls, access_token):
-        """Return the Facebook user ID using access_token."""
+    def _get_user_id(cls, access_token):
+        """Return the Facebook user ID using access_token.
+
+        Args:
+            access_token: String access token.
+        Returns:
+            String Facebook user ID.
+        """
         if not isinstance(access_token, basestring):
             return None
         if len(access_token) <= 0:
@@ -461,61 +401,90 @@ class FacebookCallback(LinkedInCallback):
 
         parameters = {
             'access_token': access_token,
-            'appsecret_proof': cls.get_appsecret_proof(access_token),
+            'appsecret_proof': self._get_appsecret_proof(access_token),
             'fields': 'id,name'
         }
-        url = cls.PROFILE_ENDPOINT + '?' + urllib.urlencode(parameters)
-        response = fetch(url)
-        result = parse_JSON_response(response)
+        url = self.get_profile_endpoint() + '?' + urllib.urlencode(parameters)
+        response = _fetch_url(url)
+        result = _parse_JSON_response(response)
         if isinstance(result, dict):
             user_id = result.get('id')
             if isinstance(user_id, basestring) and (len(user_id) > 0):
                 return user_id
         return None
 
-class GitHubCallback(LinkedInCallback):
+class GitHubFlow(LinkedInFlow):
 
-    CONFIG_KEY = 'GitHub'
-    """String key for the GitHub configuration dictionary."""
+    """GitHub also allows you to sign up."""
 
-    AUTHORIZATION_ENDPOINT = 'https://github.com/login/oauth/authorize'
-    """String URL to the GitHub authorization endpoint."""
+    def __init__(self, method, pepper, client_id, client_secret,
+                 allow_signup=None):
+        """Initialize this authentication flow.
 
-    TOKEN_ENDPOINT = 'https://github.com/login/oauth/access_token'
-    """String URL to the GitHub token endpoint."""
+        Args:
+            method: String ASCII name of a method from hashlib to use to hash
+                the user ID.
+            pepper: String ASCII secret constant stored in the configuration.
+            client_id: String "API Key" value generated when you registered
+                your application.
+            client_secret: String "Secret Key" value generated when you
+                registered your application.
+            allow_signup: Optional string indicating whether or not
+                unauthenticated users will be offered an option to sign up for
+                GitHub during the OAuth flow.
+        """
+        super(GitHubFlow, self).__init__(
+            method, pepper, client_id, client_secret)
 
-    PROFILE_ENDPOINT = 'https://api.github.com/graphql'
-    """String URL to the GitHub GraphQL API v4 endpoint."""
+        if (isinstance(allow_signup, basestring) and
+            (allow_signup.strip().lower() in ('on', 'true', 'yes'))):
+            self.allow_signup = 'true'
+        else:
+            self.allow_signup = 'false'
 
-    @classmethod
-    def create_login_url(cls, redirect_uri, state):
+    def get_name(self):
+        """Return the string name of this identity provider."""
+        return 'GitHub'
+
+    def get_authorization_endpoint(self):
+        """Return the string URL to the GitHub authorization endpoint."""
+        return 'https://github.com/login/oauth/authorize'
+
+    def get_token_endpoint(self):
+        """Return the string URL to the GitHub token endpoint."""
+        return 'https://github.com/login/oauth/access_token'
+
+    def get_profile_endpoint(self):
+        """Return the string URL to the GitHub GraphQL API v4 endpoint."""
+        return 'https://api.github.com/graphql'
+
+    def create_login_url(self, redirect_uri, state):
         """Return the URL to request a user's GitHub identity.
 
         Args:
-            redirect_uri: String URL to this callback handler.
+            redirect_uri: String URI to the callback handler.
             state: String unguessable random string to protect against
                 cross-site request forgery attacks.
         Returns:
             String URL to request a user's GitHub identity.
         """
         parameters = {
-            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
+            'client_id': self.client_id,
             'redirect_uri': redirect_uri,
             'scope': 'user',
-            'state': state
+            'state': state,
+            'allow_signup': self.allow_signup
         }
-        allow_signup = CONFIG[cls.CONFIG_KEY].get('allow_signup')
-        if allow_signup in ('true', 'false'):
-            parameters['allow_signup'] = allow_signup
-        return cls.AUTHORIZATION_ENDPOINT + '?' + urllib.urlencode(parameters)
+        url = self.get_authorization_endpoint() + '?'
+        url += urllib.urlencode(parameters)
+        return url
 
-    @classmethod
-    def get_access_token(cls, code, redirect_uri, state):
+    def get_access_token(self, code, redirect_uri, state):
         """Exchange the temporary code parameter for an access token.
 
         Args:
             code: String temporary authorization code parameter.
-            redirect_uri: String URL to this callback handler.
+            redirect_uri: String URI to the callback handler.
             state: String unguessable random string to protect against
                 cross-site request forgery attacks.
         Returns:
@@ -527,8 +496,8 @@ class GitHubCallback(LinkedInCallback):
             return None
 
         payload = urllib.urlencode({
-            'client_id': CONFIG[cls.CONFIG_KEY].get('client_id'),
-            'client_secret': CONFIG[cls.CONFIG_KEY].get('client_secret'),
+            'client_id': self.client_id,
+            'client_secret': self.client_secret,
             'code': code,
             'redirect_uri': redirect_uri,
             'state': state
@@ -537,18 +506,23 @@ class GitHubCallback(LinkedInCallback):
             'Accept': 'application/json',
             'Content-Type': 'application/x-www-form-urlencoded'
         }
-        response = fetch(cls.TOKEN_ENDPOINT,
-                         payload, urlfetch.POST, headers)
-        result = parse_JSON_response(response)
+        response = _fetch_url(self.get_token_endpoint(),
+                              payload, urlfetch.POST, headers)
+        result = _parse_JSON_response(response)
         if isinstance(result, dict):
             token = result.get('access_token')
             if isinstance(token, basestring) and (len(token) > 0):
                 return token
         return None
 
-    @classmethod
-    def get_user_id(cls, access_token):
-        """Return the GitHub user ID using access_token."""
+    def _get_user_id(cls, access_token):
+        """Return the GitHub user ID using access_token.
+
+        Args:
+            access_token: String access token.
+        Returns:
+            String GitHub user ID.
+        """
         if not isinstance(access_token, basestring):
             return None
         if len(access_token) <= 0:
@@ -556,9 +530,9 @@ class GitHubCallback(LinkedInCallback):
 
         payload = '{"query": "query { viewer { email id login name }}"}'
         headers = {'Authorization': 'Bearer ' + access_token}
-        response = fetch(cls.PROFILE_ENDPOINT,
-                         payload, urlfetch.POST, headers)
-        result = parse_JSON_response(response)
+        response = _fetch_url(self.get_profile_endpoint(),
+                              payload, urlfetch.POST, headers)
+        result = _parse_JSON_response(response)
         if isinstance(result, dict):
             data = result.get('data')
             if isinstance(data, dict):
@@ -570,89 +544,59 @@ class GitHubCallback(LinkedInCallback):
                         return user_id
         return None
 
-class GoogleCallback(base_handler.BaseHandler):
-    def get(self):
-        """Handle the Google redirect back to us."""
-        current_user = users.get_current_user()
-        if isinstance(current_user, users.User):
-            user_id = current_user.user_id()
-            if isinstance(user_id, basestring) and (len(user_id) > 0):
-                self.session['user_id'] = user_id
-                self.session['hash'] = hash_user_id(
-                    user_id, CONFIG['Google'].get('method'),
-                    CONFIG['Google'].get('pepper'), 'google_')
-                return self.after_login()
+class TwitterFlow(GoogleFlow):
 
-        # If login was canceled or failed
-        return self.after_logout()
+    """OAuth 1.0a implementation."""
 
-    @staticmethod
-    def create_login_url(redirect_uri, state):
-        """Return the URL to request a user's Google identity.
+    def __init__(self, method, pepper, consumer_key, consumer_secret):
+        """Initialize this authentication flow.
 
         Args:
-            redirect_uri: String URL to this callback handler.
-            state: String unguessable random string to protect against
-                cross-site request forgery attacks.
-        Returns:
-            String URL to request a user's Google identity.
+            method: String ASCII name of a method from hashlib to use to hash
+                the user ID.
+            pepper: String ASCII secret constant stored in the configuration.
+            consumer_key: String value from checking the settings page for
+                your application on apps.twitter.com.
+            consumer_secret: String value from checking the settings page for
+                your application on apps.twitter.com.
         """
-        # Delegate to the App Engine Users API
-        return users.create_login_url(redirect_uri)
+        if not isinstance(consumer_key, str):
+            raise TypeError('consumer_key must be a non-empty ASCII string.')
+        if len(consumer_key) <= 0:
+            raise ValueError('consumer_key must be a non-empty ASCII string.')
+        if not isinstance(consumer_secret, str):
+            raise TypeError(
+                'consumer_secret must be a non-empty ASCII string.')
+        if len(consumer_secret) <= 0:
+            raise ValueError(
+                'consumer_secret must be a non-empty ASCII string.')
+        super(TwitterFlow, self).__init__(method, pepper)
 
-class TwitterCallback(base_handler.BaseHandler):
+        self.consumer_key = consumer_key
+        """String consumer key from the settings page."""
 
-    REQUEST_ENDPOINT = 'https://api.twitter.com/oauth/request_token'
-    """String URL to the Twitter request token endpoint."""
+        self.consumer_secret = consumer_secret
+        """String consumer secret from the settings page."""
 
-    AUTHORIZATION_ENDPOINT = 'https://api.twitter.com/oauth/authenticate'
-    """String URL to the Twitter authorization endpoint."""
+    def get_name(self):
+        """Return the string name of this identity provider."""
+        return 'Twitter'
 
-    TOKEN_ENDPOINT = 'https://api.twitter.com/oauth/access_token'
-    """String URL to the Twitter token endpoint."""
+    def get_request_endpoint(self):
+        """Return the string URL to the Twitter request token endpoint."""
+        return 'https://api.twitter.com/oauth/request_token'
 
-    PROFILE_ENDPOINT = '\
-https://api.twitter.com/1.1/account/verify_credentials.json'
-    """String URL to the Twitter public profile endpoint."""
+    def get_authorization_endpoint(self):
+        """Return the string URL to the Twitter authorization endpoint."""
+        return 'https://api.twitter.com/oauth/authenticate'
 
-    def get(self):
-        """Handle the Twitter redirect back to us."""
-        if (('error' in self.request.GET) or
-            ('error_description' in self.request.GET)):
-            return self.after_logout()
+    def get_token_endpoint(self):
+        """Return the string URL to the Twitter token endpoint."""
+        return 'https://api.twitter.com/oauth/access_token'
 
-        token = self.request.GET.get('oauth_token')
-        if (not isinstance(token, basestring)) or (len(token) <= 0):
-            return self.after_logout()
-        expected_token = self.session.get('oauth_token')
-        if token != expected_token:
-            return self.after_logout()
-
-        # Trade for access token and use access token to get user ID
-        verifier = self.request.GET.get('oauth_verifier')
-        if (not isinstance(verifier, basestring)) or (len(verifier) <= 0):
-            return self.after_logout()
-        secret = self.session.get('oauth_token_secret')
-        access_token, access_secret = self.get_access_token(
-            token, secret, verifier)
-        if ((not isinstance(access_token, basestring)) or
-            (len(access_token) <= 0)):
-            return self.after_logout()
-        if ((not isinstance(access_secret, basestring)) or
-            (len(access_secret) <= 0)):
-            return self.after_logout()
-        user_id = self.get_user_id(access_token, access_secret)
-        if (not isinstance(user_id, basestring)) or (len(user_id) <= 0):
-            return self.after_logout()
-
-        self.session['access_token'] = access_token
-        self.session['access_token_secret'] = access_secret
-        self.session['user_id'] = user_id
-        self.session['hash'] = hash_user_id(
-            user_id, CONFIG['Twitter'].get('method'),
-            CONFIG['Twitter'].get('pepper'), 'twitter_')
-
-        return self.after_login()
+    def get_profile_endpoint(self):
+        """Return the string URL to the Twitter public profile endpoint."""
+        return 'https://api.twitter.com/1.1/account/verify_credentials.json'
 
     @staticmethod
     def _percent_encode(s):
@@ -664,8 +608,7 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
         else:
             raise TypeError('s must be a string.')
 
-    @classmethod
-    def _get_signature(cls, base_url, parameters, method, nonce, timestamp,
+    def _get_signature(self, base_url, parameters, method, nonce, timestamp,
                        token='', token_secret=''):
         """Return the OAuth 1.0a HMAC-SHA1 signature for a HTTP request.
 
@@ -683,10 +626,10 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
             String OAuth 1.0a HMAC-SHA1 signature for a Twitter HTTP request.
         """
         encoded_parameters = dict(
-            [(cls._percent_encode(key), cls._percent_encode(value))
+            [(self._percent_encode(key), self._percent_encode(value))
              for key, value in parameters.iteritems()])
         for key, value in [
-            ('oauth_consumer_key', CONFIG['Twitter'].get('consumer_key')),
+            ('oauth_consumer_key', self.consumer_key),
             ('oauth_nonce', nonce),
             ('oauth_signature_method', 'HMAC-SHA1'),
             ('oauth_timestamp', timestamp),
@@ -696,8 +639,8 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
                 continue
             if len(value) <= 0:
                 continue
-            encoded_key = cls._percent_encode(key)
-            encoded_value = cls._percent_encode(value)
+            encoded_key = self._percent_encode(key)
+            encoded_value = self._percent_encode(value)
             encoded_parameters[encoded_key] = encoded_value
 
         keys = encoded_parameters.keys()
@@ -707,18 +650,16 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
         print parameter_string
 
         # Double encoding parameter_string is correct
-        base_string = '&'.join([method, cls._percent_encode(base_url),
-                                cls._percent_encode(parameter_string)])
+        base_string = '&'.join([method, self._percent_encode(base_url),
+                                self._percent_encode(parameter_string)])
         print base_string
-        signing_key = '&'.join([CONFIG['Twitter'].get('consumer_secret'),
-                                token_secret])
+        signing_key = '&'.join([self.consumer_secret, token_secret])
         print signing_key
         hmac_obj = hmac.new(signing_key, base_string, hashlib.sha1)
         print hmac_obj.hexdigest()
         return base64.b64encode(hmac_obj.digest())
 
-    @classmethod
-    def _get_authorization_header(cls, nonce, signature, timestamp,
+    def _get_authorization_header(self, nonce, signature, timestamp,
                                   callback='', token=''):
         """Return the Authorization header value for Twitter.
 
@@ -727,7 +668,7 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
             signature: String OAuth 1.0a HMAC-SHA1 signature.
             timestamp: String number of seconds since the Unix epoch at the
                 point the request is generated.
-            callback: Optional string URL to this callback handler.
+            callback: Optional string URL to the callback handler.
             token: Optional string OAuth token.
         Returns:
             String Authorization header value for Twitter.
@@ -735,7 +676,7 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
         parts = []
         for key, value in [
             ('oauth_callback', callback),
-            ('oauth_consumer_key', CONFIG['Twitter'].get('consumer_key')),
+            ('oauth_consumer_key', self.consumer_key),
             ('oauth_nonce', nonce),
             ('oauth_signature', signature),
             ('oauth_signature_method', 'HMAC-SHA1'),
@@ -746,13 +687,12 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
                 continue
             if len(value) <= 0:
                 continue
-            parts.append('{0}="{1}"'.format(cls._percent_encode(key),
-                                            cls._percent_encode(value)))
+            parts.append('{0}="{1}"'.format(self._percent_encode(key),
+                                            self._percent_encode(value)))
 
         return 'OAuth ' + ', '.join(parts)
 
-    @classmethod
-    def _twitter_fetch(cls, base_url, parameters, method,
+    def _twitter_fetch(self, base_url, parameters, method,
                        token='', token_secret=''):
         """Return the response of an OAuth 1.0a HTTP request to Twitter.
 
@@ -774,7 +714,7 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
             raise ValueError('base_url must be a non-empty string.')
         if not isinstance(parameters, dict):
             raise TypeError('parameters must be a dict.')
-        if not isinstance(method, basestring):
+        if not isinstance(method, str):
             raise TypeError('method must be "GET" or "POST".')
         method = method.strip().upper()
         if method not in ('GET', 'POST'):
@@ -783,27 +723,26 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
         timestamp = str(long(time.time()))
         # oauth_nonce is not used for anything so cheat with the timestamp
         nonce = 'nonce' + timestamp
-        signature = cls._get_signature(base_url, parameters, method, nonce,
-                                       timestamp, token, token_secret)
+        signature = self._get_signature(base_url, parameters, method, nonce,
+                                        timestamp, token, token_secret)
         callback = parameters.get('oauth_callback', '')
         headers = {
-            'Authorization': cls._get_authorization_header(
+            'Authorization': self._get_authorization_header(
                 nonce, signature, timestamp, callback, token)
         }
         if method == 'GET':
             url = base_url + '?' + urllib.urlencode(parameters)
-            return fetch(url, headers=headers)
+            return _fetch_url(url, headers=headers)
         else:
             headers['Content-Type'] = 'application/x-www-form-urlencoded'
-            return fetch(base_url, urllib.urlencode(parameters),
-                         urlfetch.POST, headers)
+            return _fetch_url(base_url, urllib.urlencode(parameters),
+                              urlfetch.POST, headers)
 
-    @classmethod
-    def create_login_url(cls, redirect_uri, state):
+    def create_login_url(self, redirect_uri, state):
         """Return the URL to request a user's Twitter identity.
 
         Args:
-            redirect_uri: String URL to this callback handler.
+            redirect_uri: String URI to the callback handler.
             state: String unguessable random string to protect against
                 cross-site request forgery attacks.
         Returns:
@@ -814,7 +753,8 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
         parameters = {
             'oauth_callback': redirect_uri
         }
-        response = cls._twitter_fetch(cls.REQUEST_ENDPOINT, parameters, 'POST')
+        response = self._twitter_fetch(self.get_request_endpoint(),
+                                       parameters, 'POST')
         if response is None:
             return None, None, None
         result = urlparse.parse_qs(response.content)
@@ -822,13 +762,12 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
             if result.get('oauth_callback_confirmed') == 'true':
                 token = result.get('oauth_token')
                 secret = result.get('oauth_token_secret')
-                url = cls.AUTHORIZATION_ENDPOINT
-                url += '?' + urllib.urlencode({'oauth_token': token})
+                url = self.get_authorization_endpoint() + '?'
+                url += urllib.urlencode({'oauth_token': token})
                 return url, token, secret
         return None, None, None
 
-    @classmethod
-    def get_access_token(cls, token, secret, verifier):
+    def get_access_token(self, token, secret, verifier):
         """Exchange the request token for an access token.
 
         Args:
@@ -855,8 +794,8 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
         parameters = {
             'oauth_verifier': verifier
         }
-        response = cls._twitter_fetch(cls.TOKEN_ENDPOINT, parameters, 'POST',
-                                      token, secret)
+        response = self._twitter_fetch(self.get_token_endpoint(),
+                                       parameters, 'POST', token, secret)
         if response is None:
             return None, None
         result = urlparse.parse_qs(response.content)
@@ -867,8 +806,7 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
             return token, secret
         return None, None
 
-    @classmethod
-    def get_user_id(cls, token, secret):
+    def _get_user_id(self, token, secret):
         """Return the Twitter user ID using the access token.
 
         Args:
@@ -891,11 +829,286 @@ https://api.twitter.com/1.1/account/verify_credentials.json'
             'skip_status': 'true',
             'include_email': 'false'
         }
-        response = cls._twitter_fetch(cls.PROFILE_ENDPOINT, parameters, 'GET',
-                                      token, secret)
-        result = parse_JSON_response(response)
+        response = self._twitter_fetch(self.get_profile_endpoint(),
+                                       parameters, 'GET', token, secret)
+        result = _parse_JSON_response(response)
         if isinstance(result, dict):
             user_id = result.get('id_str')
             if isinstance(user_id, basestring) and (len(user_id) > 0):
                 return user_id
         return None
+
+
+def _parse_config(path):
+    """Parse the configuration in the YAML file at path.
+
+    Args:
+        path: String ASCII path to the YAML configuration file.
+    Raises:
+        IndexError if a required key is missing from the configuration file.
+    Returns:
+        Dictionary of identity providers as GoogleFlow objects
+        String secret key for webapp2.sessions
+    """
+    if not isinstance(path, str):
+        raise TypeError('path must be a valid ASCII path to a YAML file.')
+    if not os.path.isfile(path):
+        raise ValueError('path must be a valid ASCII path to a YAML file.')
+
+    config = {}
+    with open(path, 'r') as yaml_file:
+        try:
+            for document in yaml.safe_load_all(yaml_file):
+                if isinstance(document, dict):
+                    config = document
+                    break
+        except yaml.YAMLError:
+            pass
+
+    # Read the secret key for webapp2.sessions
+    if 'webapp2' not in config:
+        raise IndexError(
+            'webapp2 section is REQUIRED in the YAML configuration file.')
+    secret_key = config['webapp2'].get('secret_key')
+    if not isinstance(secret_key, basestring):
+        raise IndexError(
+            'webapp2 secret_key is REQUIRED in the YAML configuration file.')
+
+    # Read the configurations for the identity providers
+    provider_map = {}
+    for key, value in config.iteritems():
+        if not isinstance(value, dict):
+            continue
+        provider = key.strip().lower()
+        flow = None
+        if provider == 'facebook':
+            flow = FacebookFlow(
+                value.get('method'), value.get('pepper'),
+                value.get('client_id'), value.get('client_secret'))
+        elif provider == 'github':
+            flow = GitHubFlow(
+                value.get('method'), value.get('pepper'),
+                value.get('client_id'), value.get('client_secret'),
+                value.get('allow_signup'))
+        elif provider == 'google':
+            flow = GoogleFlow(value.get('method'), value.get('pepper'))
+        elif provider == 'linkedin':
+            flow = LinkedInFlow(
+                value.get('method'), value.get('pepper'),
+                value.get('client_id'), value.get('client_secret'))
+        elif provider == 'twitter':
+            flow = TwitterFlow(
+                value.get('method'), value.get('pepper'),
+                value.get('consumer_key'), value.get('consumer_secret'))
+        else:
+            # Unimplemented or unrecognized identity provider
+            continue
+        if flow is not None:
+            provider_map[flow.get_name()] = flow
+
+    return provider_map, secret_key
+
+# Detect if the code is running on the development web server
+DEBUG = os.environ.get('SERVER_SOFTWARE', '').startswith('Dev')
+
+if DEBUG:
+    _PATH_TO_CONFIG = os.path.abspath(os.path.join(os.path.dirname(__file__),
+                                                   'development.yaml'))
+    """String path to the development YAML configuration file."""
+else:
+    _PATH_TO_CONFIG = os.path.abspath(os.path.join(os.path.dirname(__file__),
+                                                   'production.yaml'))
+    """String path to the production YAML configuration file."""
+
+PROVIDER_MAP, SECRET_KEY = _parse_config(_PATH_TO_CONFIG)
+"""Dictionary of identity providers as GoogleFlow subclasses."""
+"""String secret key for webapp2.sessions."""
+
+
+class LogoutHandler(base_handler.BaseHandler):
+    def get(self):
+        """Discard the session."""
+        self.session['_logout'] = True
+        return self.after_logout()
+
+class LoginHandler(base_handler.BaseHandler):
+
+    """Handler for the identity provider selection page.
+
+    This is called the NASCAR screen in FirebaseUI due to the way the identity
+    provider buttons look like the sponsor decals on the cars.
+    """
+
+    def get(self):
+        """Show a form with the available identity providers alphabetically."""
+        providers = PROVIDER_MAP.keys()
+        providers.sort()
+        values = {
+            'providers': providers
+        }
+        self.render_template('login.html', values)
+
+    def post(self):
+        """Redirect the user to the selected identity provider."""
+        for name, flow in PROVIDER_MAP.iteritems():
+            key = 'provider:' + name.lower()
+            if key not in self.request.POST:
+                continue
+
+            if self.app.debug:
+                # The development web server does not support HTTPS
+                scheme = 'http'
+            else:
+                scheme = 'https'
+            callback_url = self.uri_for(name + '_callback', _scheme=scheme)
+            state = security.generate_random_string(
+                length=32, pool=security.ALPHANUMERIC)
+            # Store the state in the session so it can be verified on callback
+            # It is not a secret because it is exposed in the redirect
+            self.session['state'] = state
+            if name == 'Twitter':
+                # Twitter uses OAuth 1.0a which means more work
+                auth_url, token, secret = flow.create_login_url(
+                    callback_url, state)
+                if isinstance(auth_url, basestring) and (len(auth_url) > 0):
+                    self.session['oauth_token'] = token
+                    self.session['oauth_token_secret'] = secret
+                    return self.redirect(auth_url)
+                else:
+                    break
+            else:
+                return self.redirect(flow.create_login_url(
+                    callback_url, state))
+
+        # Otherwise, unimplemented or unrecognized identity provider
+        return self.redirect_to('login')
+
+class LinkedInCallback(base_handler.BaseHandler):
+    def get(self):
+        """Handle the LinkedIn redirect back to us."""
+        if (('error' in self.request.GET) or
+            ('error_description' in self.request.GET)):
+            return self.after_logout()
+
+        state = self.request.GET.get('state')
+        if (not isinstance(state, basestring)) or (len(state) <= 0):
+            return self.after_logout()
+        expected_state = self.session.get('state')
+        if state != expected_state:
+            return self.after_logout()
+
+        # Trade code for access token and use access token to get user ID
+        code = self.request.GET.get('code')
+        if (not isinstance(code, basestring)) or (len(code) <= 0):
+            return self.after_logout()
+        flow = self.get_flow()
+        if not isinstance(flow, LinkedInFlow):
+            return self.after_logout()
+        token = flow.get_access_token(code, self.request.path_url, state)
+        if (not isinstance(token, basestring)) or (len(token) <= 0):
+            return self.after_logout()
+
+        hashed_user_id = flow.get_hashed_user_id()
+        if (isinstance(hashed_user_id, basestring) and
+            (len(hashed_user_id) > 0)):
+            self.session['access_token'] = token
+            self.session['hash'] = hashed_user_id
+            return self.after_login()
+
+        # If login was canceled or failed
+        return self.after_logout()
+
+    def get_flow(self):
+        """Return the LinkedInFlow object for this callback handler."""
+        flow = PROVIDER_MAP.get('LinkedIn')
+        if not isinstance(flow, LinkedInFlow):
+            logging.error(
+                'LinkedIn was not configured as an identity provider!')
+        return flow
+
+class FacebookCallback(LinkedInCallback):
+    def get(self):
+        """Handle the Facebook redirect back to us."""
+        if 'error_reason' in self.request.GET:
+            # Facebook includes an extra error_reason parameter
+            return self.after_logout()
+        return super(FacebookCallback, self).get()
+
+    def get_flow(self):
+        """Return the FacebookFlow object for this callback handler."""
+        flow = PROVIDER_MAP.get('Facebook')
+        if not isinstance(flow, FacebookFlow):
+            logging.error(
+                'Facebook was not configured as an identity provider!')
+        return flow
+
+class GitHubCallback(LinkedInCallback):
+    def get_flow(self):
+        """Return the GitHubFlow object for this callback handler."""
+        flow = PROVIDER_MAP.get('GitHub')
+        if not isinstance(flow, GitHubFlow):
+            logging.error(
+                'GitHub was not configured as an identity provider!')
+        return flow
+
+class GoogleCallback(base_handler.BaseHandler):
+    def get(self):
+        """Handle the Google redirect back to us."""
+        flow = PROVIDER_MAP.get('Google')
+        if not isinstance(flow, GoogleFlow):
+            logging.error(
+                'Google was not configured as an identity provider!')
+            return self.after_logout()
+
+        hashed_user_id = flow.get_hashed_user_id()
+        if (isinstance(hashed_user_id, basestring) and
+            (len(hashed_user_id) > 0)):
+            self.session['hash'] = hashed_user_id
+            return self.after_login()
+
+        # If login was canceled or failed
+        return self.after_logout()
+
+class TwitterCallback(base_handler.BaseHandler):
+    def get(self):
+        """Handle the Twitter redirect back to us."""
+        if (('error' in self.request.GET) or
+            ('error_description' in self.request.GET)):
+            return self.after_logout()
+
+        token = self.request.GET.get('oauth_token')
+        if (not isinstance(token, basestring)) or (len(token) <= 0):
+            return self.after_logout()
+        expected_token = self.session.get('oauth_token')
+        if token != expected_token:
+            return self.after_logout()
+
+        # Trade for access token and use access token to get user ID
+        verifier = self.request.GET.get('oauth_verifier')
+        if (not isinstance(verifier, basestring)) or (len(verifier) <= 0):
+            return self.after_logout()
+        secret = self.session.get('oauth_token_secret')
+        flow = PROVIDER_MAP.get('Twitter')
+        if not isinstance(flow, TwitterFlow):
+            logging.error(
+                'Twitter was not configured as an identity provider!')
+            return self.after_logout()
+        access_token, access_secret = flow.get_access_token(
+            token, secret, verifier)
+        if ((not isinstance(access_token, basestring)) or
+            (len(access_token) <= 0)):
+            return self.after_logout()
+        if ((not isinstance(access_secret, basestring)) or
+            (len(access_secret) <= 0)):
+            return self.after_logout()
+
+        hashed_user_id = flow.get_hashed_user_id(access_token, access_secret)
+        if (isinstance(hashed_user_id, basestring) and
+            (len(hashed_user_id) > 0)):
+            self.session['access_token'] = access_token
+            self.session['access_token_secret'] = access_secret
+            self.session['hash'] = hashed_user_id
+            return self.after_login()
+
+        # If login was canceled or failed
+        return self.after_logout()
