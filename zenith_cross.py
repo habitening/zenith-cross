@@ -1,4 +1,4 @@
-"""webapp2 handlers and helpers to support federated login."""
+"""Request handlers and helpers to support federated login."""
 
 import base64
 import hashlib
@@ -15,7 +15,6 @@ from google.appengine.api import urlfetch
 from google.appengine.api import users
 from google.appengine.runtime import apiproxy_errors
 
-import webapp2
 from webapp2_extras import security
 import yaml
 
@@ -76,6 +75,18 @@ def _parse_JSON_response(response, default=None):
             return result
     return default
 
+def _is_valid(token):
+    """Return True if token is a non-empty string and False otherwise."""
+    return (isinstance(token, basestring) and (len(token) > 0))
+
+def _get_string_value(dictionary, key, default=None):
+    """Return the string value for key in dictionary or default."""
+    if isinstance(dictionary, dict) and isinstance(key, str):
+        value = dictionary.get(key)
+        if _is_valid(value):
+            return value
+    return default
+
 def _hash_user_id(user_id, method, pepper=None, prefix=None):
     """Return user_id hashed with method and optionally pepper.
 
@@ -92,8 +103,8 @@ def _hash_user_id(user_id, method, pepper=None, prefix=None):
 
     Args:
         user_id: String user ID from an identity provider.
-        method: String name of a method from hashlib to use to generate the
-            hash.
+        method: String name of a method from hashlib to use to hash
+            the user ID.
         pepper: Optional string secret constant stored in the configuration.
         prefix: Optional ASCII string prefix to prepend to the hash.
     Returns:
@@ -103,10 +114,8 @@ def _hash_user_id(user_id, method, pepper=None, prefix=None):
         raise TypeError('user_id must be a non-empty string.')
     if len(user_id) <= 0:
         raise ValueError('user_id must be a non-empty string.')
-    if not isinstance(method, str):
-        raise TypeError('method must be a non-empty ASCII string.')
-    if len(method) <= 0:
-        raise ValueError('method must be a non-empty ASCII string.')
+    if not hasattr(hashlib, method):
+        raise ValueError('method must be in hashlib.')
 
     hashed_id = security.hash_password(user_id, method, pepper=pepper)
     if isinstance(prefix, str) and (len(prefix) > 0):
@@ -123,14 +132,12 @@ class GoogleFlow(object):
         """Initialize this authentication flow.
 
         Args:
-            method: String ASCII name of a method from hashlib to use to hash
+            method: String name of a method from hashlib to use to hash
                 the user ID.
             pepper: String ASCII secret constant stored in the configuration.
         """
-        if not isinstance(method, str):
-            raise TypeError('method must be a non-empty ASCII string.')
-        if len(method) <= 0:
-            raise ValueError('method must be a non-empty ASCII string.')
+        if not hasattr(hashlib, method):
+            raise ValueError('method must be in hashlib.')
         if not isinstance(pepper, str):
             raise TypeError('pepper must be a non-empty ASCII string.')
         if len(pepper) <= 0:
@@ -146,7 +153,7 @@ class GoogleFlow(object):
         """Return the string name of this identity provider."""
         return 'Google'
 
-    def create_login_url(self, redirect_uri, **kwargs):
+    def create_login_url(self, redirect_uri, *args):
         """Return the URL to request a user's Google identity.
 
         Args:
@@ -162,7 +169,7 @@ class GoogleFlow(object):
         current_user = users.get_current_user()
         if isinstance(current_user, users.User):
             user_id = current_user.user_id()
-            if isinstance(user_id, basestring) and (len(user_id) > 0):
+            if _is_valid(user_id):
                 return user_id
         return None
 
@@ -172,9 +179,9 @@ class GoogleFlow(object):
         Args:
             user_id: Optional string user ID to hash.
         """
-        if (not isinstance(user_id, basestring)) or (len(user_id) <= 0):
+        if not _is_valid(user_id):
             user_id = self._get_user_id(**kwargs)
-        if isinstance(user_id, basestring) and (len(user_id) > 0):
+        if _is_valid(user_id):
             return _hash_user_id(user_id, self.method, self.pepper,
                                  self.get_name().lower() + '_')
         return None
@@ -187,7 +194,7 @@ class LinkedInFlow(GoogleFlow):
         """Initialize this authentication flow.
 
         Args:
-            method: String ASCII name of a method from hashlib to use to hash
+            method: String name of a method from hashlib to use to hash
                 the user ID.
             pepper: String ASCII secret constant stored in the configuration.
             client_id: String "API Key" value generated when you registered
@@ -215,15 +222,15 @@ class LinkedInFlow(GoogleFlow):
         """Return the string name of this identity provider."""
         return 'LinkedIn'
 
-    def get_authorization_endpoint(self):
+    def _get_authorization_endpoint(self):
         """Return the string URL to the LinkedIn authorization endpoint."""
         return 'https://www.linkedin.com/oauth/v2/authorization'
 
-    def get_token_endpoint(self):
+    def _get_token_endpoint(self):
         """Return the string URL to the LinkedIn token endpoint."""
         return 'https://www.linkedin.com/oauth/v2/accessToken'
 
-    def get_profile_endpoint(self):
+    def _get_profile_endpoint(self):
         """Return the string URL to the LinkedIn basic profile endpoint."""
         return 'https://api.linkedin.com/v1/people/~?format=json'
 
@@ -244,7 +251,7 @@ class LinkedInFlow(GoogleFlow):
             'scope': 'r_basicprofile',
             'state': state
         }
-        url = self.get_authorization_endpoint() + '?'
+        url = self._get_authorization_endpoint() + '?'
         url += urllib.urlencode(parameters)
         return url
 
@@ -259,9 +266,7 @@ class LinkedInFlow(GoogleFlow):
         Returns:
             String access token or None if an error occurred.
         """
-        if not isinstance(code, basestring):
-            return None
-        if len(code) <= 0:
+        if not _is_valid(code):
             return None
 
         payload = urllib.urlencode({
@@ -274,14 +279,10 @@ class LinkedInFlow(GoogleFlow):
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded'
         }
-        response = _fetch_url(self.get_token_endpoint(),
+        response = _fetch_url(self._get_token_endpoint(),
                               payload, urlfetch.POST, headers)
         result = _parse_JSON_response(response)
-        if isinstance(result, dict):
-            token = result.get('access_token')
-            if isinstance(token, basestring) and (len(token) > 0):
-                return token
-        return None
+        return _get_string_value(result, 'access_token')
 
     def _get_user_id(cls, access_token):
         """Return the LinkedIn user ID using access_token.
@@ -291,34 +292,28 @@ class LinkedInFlow(GoogleFlow):
         Returns:
             String LinkedIn user ID.
         """
-        if not isinstance(access_token, basestring):
-            return None
-        if len(access_token) <= 0:
+        if not _is_valid(access_token):
             return None
 
         headers = {'Authorization': 'Bearer ' + access_token}
-        response = _fetch_url(self.get_profile_endpoint(), headers=headers)
+        response = _fetch_url(self._get_profile_endpoint(), headers=headers)
         result = _parse_JSON_response(response)
-        if isinstance(result, dict):
-            user_id = result.get('id')
-            if isinstance(user_id, basestring) and (len(user_id) > 0):
-                return user_id
-        return None
+        return _get_string_value(result, 'id')
 
 class FacebookFlow(LinkedInFlow):
     def get_name(self):
         """Return the string name of this identity provider."""
         return 'Facebook'
 
-    def get_authorization_endpoint(self):
+    def _get_authorization_endpoint(self):
         """Return the string URL to the Facebook authorization endpoint."""
         return 'https://www.facebook.com/v2.12/dialog/oauth'
 
-    def get_token_endpoint(self):
+    def _get_token_endpoint(self):
         """Return the string URL to the Facebook token endpoint."""
         return 'https://graph.facebook.com/v2.12/oauth/access_token'
 
-    def get_profile_endpoint(self):
+    def _get_profile_endpoint(self):
         """Return the string URL to the Facebook public profile endpoint."""
         return 'https://graph.facebook.com/v2.12/me'
 
@@ -339,7 +334,7 @@ class FacebookFlow(LinkedInFlow):
             'scope': 'public_profile',
             'state': state
         }
-        url = self.get_authorization_endpoint() + '?'
+        url = self._get_authorization_endpoint() + '?'
         url += urllib.urlencode(parameters)
         return url
 
@@ -354,9 +349,7 @@ class FacebookFlow(LinkedInFlow):
         Returns:
             String access token or None if an error occurred.
         """
-        if not isinstance(code, basestring):
-            return None
-        if len(code) <= 0:
+        if not _is_valid(code):
             return None
 
         parameters = {
@@ -365,14 +358,10 @@ class FacebookFlow(LinkedInFlow):
             'code': code,
             'redirect_uri': redirect_uri
         }
-        url = self.get_token_endpoint() + '?' + urllib.urlencode(parameters)
+        url = self._get_token_endpoint() + '?' + urllib.urlencode(parameters)
         response = _fetch_url(url)
         result = _parse_JSON_response(response)
-        if isinstance(result, dict):
-            token = result.get('access_token')
-            if isinstance(token, basestring) and (len(token) > 0):
-                return token
-        return None
+        return _get_string_value(result, 'access_token')
 
     def _get_appsecret_proof(self, access_token):
         """Return the app secret proof to verify a Graph API call.
@@ -394,9 +383,7 @@ class FacebookFlow(LinkedInFlow):
         Returns:
             String Facebook user ID.
         """
-        if not isinstance(access_token, basestring):
-            return None
-        if len(access_token) <= 0:
+        if not _is_valid(access_token):
             return None
 
         parameters = {
@@ -404,14 +391,10 @@ class FacebookFlow(LinkedInFlow):
             'appsecret_proof': self._get_appsecret_proof(access_token),
             'fields': 'id,name'
         }
-        url = self.get_profile_endpoint() + '?' + urllib.urlencode(parameters)
+        url = self._get_profile_endpoint() + '?' + urllib.urlencode(parameters)
         response = _fetch_url(url)
         result = _parse_JSON_response(response)
-        if isinstance(result, dict):
-            user_id = result.get('id')
-            if isinstance(user_id, basestring) and (len(user_id) > 0):
-                return user_id
-        return None
+        return _get_string_value(result, 'id')
 
 class GitHubFlow(LinkedInFlow):
 
@@ -422,7 +405,7 @@ class GitHubFlow(LinkedInFlow):
         """Initialize this authentication flow.
 
         Args:
-            method: String ASCII name of a method from hashlib to use to hash
+            method: String name of a method from hashlib to use to hash
                 the user ID.
             pepper: String ASCII secret constant stored in the configuration.
             client_id: String "API Key" value generated when you registered
@@ -446,15 +429,15 @@ class GitHubFlow(LinkedInFlow):
         """Return the string name of this identity provider."""
         return 'GitHub'
 
-    def get_authorization_endpoint(self):
+    def _get_authorization_endpoint(self):
         """Return the string URL to the GitHub authorization endpoint."""
         return 'https://github.com/login/oauth/authorize'
 
-    def get_token_endpoint(self):
+    def _get_token_endpoint(self):
         """Return the string URL to the GitHub token endpoint."""
         return 'https://github.com/login/oauth/access_token'
 
-    def get_profile_endpoint(self):
+    def _get_profile_endpoint(self):
         """Return the string URL to the GitHub GraphQL API v4 endpoint."""
         return 'https://api.github.com/graphql'
 
@@ -475,7 +458,7 @@ class GitHubFlow(LinkedInFlow):
             'state': state,
             'allow_signup': self.allow_signup
         }
-        url = self.get_authorization_endpoint() + '?'
+        url = self._get_authorization_endpoint() + '?'
         url += urllib.urlencode(parameters)
         return url
 
@@ -490,9 +473,7 @@ class GitHubFlow(LinkedInFlow):
         Returns:
             String access token or None if an error occurred.
         """
-        if not isinstance(code, basestring):
-            return None
-        if len(code) <= 0:
+        if not _is_valid(code):
             return None
 
         payload = urllib.urlencode({
@@ -506,14 +487,10 @@ class GitHubFlow(LinkedInFlow):
             'Accept': 'application/json',
             'Content-Type': 'application/x-www-form-urlencoded'
         }
-        response = _fetch_url(self.get_token_endpoint(),
+        response = _fetch_url(self._get_token_endpoint(),
                               payload, urlfetch.POST, headers)
         result = _parse_JSON_response(response)
-        if isinstance(result, dict):
-            token = result.get('access_token')
-            if isinstance(token, basestring) and (len(token) > 0):
-                return token
-        return None
+        return _get_string_value(result, 'access_token')
 
     def _get_user_id(cls, access_token):
         """Return the GitHub user ID using access_token.
@@ -523,25 +500,19 @@ class GitHubFlow(LinkedInFlow):
         Returns:
             String GitHub user ID.
         """
-        if not isinstance(access_token, basestring):
-            return None
-        if len(access_token) <= 0:
+        if not _is_valid(access_token):
             return None
 
         payload = '{"query": "query { viewer { email id login name }}"}'
         headers = {'Authorization': 'Bearer ' + access_token}
-        response = _fetch_url(self.get_profile_endpoint(),
+        response = _fetch_url(self._get_profile_endpoint(),
                               payload, urlfetch.POST, headers)
         result = _parse_JSON_response(response)
         if isinstance(result, dict):
             data = result.get('data')
             if isinstance(data, dict):
                 data = data.get('viewer')
-                if isinstance(data, dict):
-                    user_id = data.get('id')
-                    if (isinstance(user_id, basestring) and
-                        (len(user_id) > 0)):
-                        return user_id
+                return _get_string_value(data, 'id')
         return None
 
 class TwitterFlow(GoogleFlow):
@@ -552,7 +523,7 @@ class TwitterFlow(GoogleFlow):
         """Initialize this authentication flow.
 
         Args:
-            method: String ASCII name of a method from hashlib to use to hash
+            method: String name of a method from hashlib to use to hash
                 the user ID.
             pepper: String ASCII secret constant stored in the configuration.
             consumer_key: String value from checking the settings page for
@@ -582,19 +553,19 @@ class TwitterFlow(GoogleFlow):
         """Return the string name of this identity provider."""
         return 'Twitter'
 
-    def get_request_endpoint(self):
+    def _get_request_endpoint(self):
         """Return the string URL to the Twitter request token endpoint."""
         return 'https://api.twitter.com/oauth/request_token'
 
-    def get_authorization_endpoint(self):
+    def _get_authorization_endpoint(self):
         """Return the string URL to the Twitter authorization endpoint."""
         return 'https://api.twitter.com/oauth/authenticate'
 
-    def get_token_endpoint(self):
+    def _get_token_endpoint(self):
         """Return the string URL to the Twitter token endpoint."""
         return 'https://api.twitter.com/oauth/access_token'
 
-    def get_profile_endpoint(self):
+    def _get_profile_endpoint(self):
         """Return the string URL to the Twitter public profile endpoint."""
         return 'https://api.twitter.com/1.1/account/verify_credentials.json'
 
@@ -635,9 +606,7 @@ class TwitterFlow(GoogleFlow):
             ('oauth_timestamp', timestamp),
             ('oauth_token', token),
             ('oauth_version', '1.0')]:
-            if not isinstance(value, basestring):
-                continue
-            if len(value) <= 0:
+            if not _is_valid(value):
                 continue
             encoded_key = self._percent_encode(key)
             encoded_value = self._percent_encode(value)
@@ -683,9 +652,7 @@ class TwitterFlow(GoogleFlow):
             ('oauth_timestamp', timestamp),
             ('oauth_token', token),
             ('oauth_version', '1.0')]:
-            if not isinstance(value, basestring):
-                continue
-            if len(value) <= 0:
+            if not _is_valid(value):
                 continue
             parts.append('{0}="{1}"'.format(self._percent_encode(key),
                                             self._percent_encode(value)))
@@ -753,7 +720,7 @@ class TwitterFlow(GoogleFlow):
         parameters = {
             'oauth_callback': redirect_uri
         }
-        response = self._twitter_fetch(self.get_request_endpoint(),
+        response = self._twitter_fetch(self._get_request_endpoint(),
                                        parameters, 'POST')
         if response is None:
             return None, None, None
@@ -762,7 +729,7 @@ class TwitterFlow(GoogleFlow):
             if result.get('oauth_callback_confirmed') == 'true':
                 token = result.get('oauth_token')
                 secret = result.get('oauth_token_secret')
-                url = self.get_authorization_endpoint() + '?'
+                url = self._get_authorization_endpoint() + '?'
                 url += urllib.urlencode({'oauth_token': token})
                 return url, token, secret
         return None, None, None
@@ -778,23 +745,17 @@ class TwitterFlow(GoogleFlow):
             String access token
             String token secret
         """
-        if not isinstance(token, basestring):
+        if not _is_valid(token):
             return None, None
-        if len(token) <= 0:
+        if not _is_valid(secret):
             return None, None
-        if not isinstance(secret, basestring):
-            return None, None
-        if len(secret) <= 0:
-            return None, None
-        if not isinstance(verifier, basestring):
-            return None, None
-        if len(verifier) <= 0:
+        if not _is_valid(verifier):
             return None, None
 
         parameters = {
             'oauth_verifier': verifier
         }
-        response = self._twitter_fetch(self.get_token_endpoint(),
+        response = self._twitter_fetch(self._get_token_endpoint(),
                                        parameters, 'POST', token, secret)
         if response is None:
             return None, None
@@ -815,13 +776,9 @@ class TwitterFlow(GoogleFlow):
         Returns:
             String Twitter user ID.
         """
-        if not isinstance(token, basestring):
+        if not _is_valid(token):
             return None
-        if len(token) <= 0:
-            return None
-        if not isinstance(secret, basestring):
-            return None
-        if len(secret) <= 0:
+        if not _is_valid(secret):
             return None
 
         parameters = {
@@ -829,14 +786,10 @@ class TwitterFlow(GoogleFlow):
             'skip_status': 'true',
             'include_email': 'false'
         }
-        response = self._twitter_fetch(self.get_profile_endpoint(),
+        response = self._twitter_fetch(self._get_profile_endpoint(),
                                        parameters, 'GET', token, secret)
         result = _parse_JSON_response(response)
-        if isinstance(result, dict):
-            user_id = result.get('id_str')
-            if isinstance(user_id, basestring) and (len(user_id) > 0):
-                return user_id
-        return None
+        return _get_string_value(result, 'id_str')
 
 
 def _parse_config(path):
@@ -868,7 +821,7 @@ def _parse_config(path):
     # Read the secret key for webapp2.sessions
     if 'webapp2' not in config:
         raise IndexError(
-            'webapp2 section is REQUIRED in the YAML configuration file.')
+            'webapp2 secret_key is REQUIRED in the YAML configuration file.')
     secret_key = config['webapp2'].get('secret_key')
     if not isinstance(secret_key, basestring):
         raise IndexError(
@@ -970,7 +923,7 @@ class LoginHandler(base_handler.BaseHandler):
                 # Twitter uses OAuth 1.0a which means more work
                 auth_url, token, secret = flow.create_login_url(
                     callback_url, state)
-                if isinstance(auth_url, basestring) and (len(auth_url) > 0):
+                if _is_valid(auth_url):
                     self.session['oauth_token'] = token
                     self.session['oauth_token_secret'] = secret
                     return self.redirect(auth_url)
@@ -991,7 +944,7 @@ class LinkedInCallback(base_handler.BaseHandler):
             return self.after_logout()
 
         state = self.request.GET.get('state')
-        if (not isinstance(state, basestring)) or (len(state) <= 0):
+        if not _is_valid(state):
             return self.after_logout()
         expected_state = self.session.get('state')
         if state != expected_state:
@@ -999,18 +952,17 @@ class LinkedInCallback(base_handler.BaseHandler):
 
         # Trade code for access token and use access token to get user ID
         code = self.request.GET.get('code')
-        if (not isinstance(code, basestring)) or (len(code) <= 0):
+        if not _is_valid(code):
             return self.after_logout()
         flow = self.get_flow()
         if not isinstance(flow, LinkedInFlow):
             return self.after_logout()
         token = flow.get_access_token(code, self.request.path_url, state)
-        if (not isinstance(token, basestring)) or (len(token) <= 0):
+        if not _is_valid(token):
             return self.after_logout()
 
-        hashed_user_id = flow.get_hashed_user_id()
-        if (isinstance(hashed_user_id, basestring) and
-            (len(hashed_user_id) > 0)):
+        hashed_user_id = flow.get_hashed_user_id(access_token=token)
+        if _is_valid(hashed_user_id):
             self.session['access_token'] = token
             self.session['hash'] = hashed_user_id
             return self.after_login()
@@ -1061,8 +1013,7 @@ class GoogleCallback(base_handler.BaseHandler):
             return self.after_logout()
 
         hashed_user_id = flow.get_hashed_user_id()
-        if (isinstance(hashed_user_id, basestring) and
-            (len(hashed_user_id) > 0)):
+        if _is_valid(hashed_user_id):
             self.session['hash'] = hashed_user_id
             return self.after_login()
 
@@ -1077,7 +1028,7 @@ class TwitterCallback(base_handler.BaseHandler):
             return self.after_logout()
 
         token = self.request.GET.get('oauth_token')
-        if (not isinstance(token, basestring)) or (len(token) <= 0):
+        if not _is_valid(token):
             return self.after_logout()
         expected_token = self.session.get('oauth_token')
         if token != expected_token:
@@ -1085,7 +1036,7 @@ class TwitterCallback(base_handler.BaseHandler):
 
         # Trade for access token and use access token to get user ID
         verifier = self.request.GET.get('oauth_verifier')
-        if (not isinstance(verifier, basestring)) or (len(verifier) <= 0):
+        if not _is_valid(verifier):
             return self.after_logout()
         secret = self.session.get('oauth_token_secret')
         flow = PROVIDER_MAP.get('Twitter')
@@ -1095,16 +1046,14 @@ class TwitterCallback(base_handler.BaseHandler):
             return self.after_logout()
         access_token, access_secret = flow.get_access_token(
             token, secret, verifier)
-        if ((not isinstance(access_token, basestring)) or
-            (len(access_token) <= 0)):
+        if not _is_valid(access_token):
             return self.after_logout()
-        if ((not isinstance(access_secret, basestring)) or
-            (len(access_secret) <= 0)):
+        if not _is_valid(access_secret):
             return self.after_logout()
 
-        hashed_user_id = flow.get_hashed_user_id(access_token, access_secret)
-        if (isinstance(hashed_user_id, basestring) and
-            (len(hashed_user_id) > 0)):
+        hashed_user_id = flow.get_hashed_user_id(token=access_token,
+                                                 secret=access_secret)
+        if _is_valid(hashed_user_id):
             self.session['access_token'] = access_token
             self.session['access_token_secret'] = access_secret
             self.session['hash'] = hashed_user_id
