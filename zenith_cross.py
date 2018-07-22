@@ -913,7 +913,8 @@ class LoginHandler(base_handler.BaseHandler):
                 scheme = 'http'
             else:
                 scheme = 'https'
-            callback_url = self.uri_for(name + '_callback', _scheme=scheme)
+            callback_url = self.uri_for(name.lower() + '_callback',
+                                        _scheme=scheme)
             state = security.generate_random_string(
                 length=32, pool=security.ALPHANUMERIC)
             # Store the state in the session so it can be verified on callback

@@ -3,7 +3,7 @@
 These tests require the WebTest package.
 
 The easiest way is to install it in a virtualenv environment and then run
-through the python interpreter in that environment.
+these tests through the python interpreter in that environment.
 """
 
 import webapp2
@@ -61,6 +61,7 @@ class SanityTest(_WSGITestCase):
                               value, 'sessionid')
             value = self.serializer.serialize('sessionid', {'_sid': sid})
             self.assertEqual(self.get_session_ID(value, 'sessionid'), sid)
+            self.assertRaises(AttributeError, self.get_session_ID, value)
             self.assertRaises(AttributeError, self.get_session_ID,
                               value, 'session')
 
@@ -98,8 +99,11 @@ class LoginTest(_WSGITestCase):
         """String URL for the login route."""
 
         self.provider_map = {
-            'github': zenith_cross.GitHubCallback.AUTHORIZATION_ENDPOINT,
-            'google': 'https://www.google.com/accounts/Login'
+            'facebook': self.url,
+            'github': 'https://github.com/login/oauth/authorize',
+            'google': 'https://www.google.com/accounts/Login',
+            'linkedin': self.url,
+            'twitter': self.url
         }
         """Dictionary mapping an identity provider to its login URL."""
 
@@ -109,26 +113,35 @@ class LoginTest(_WSGITestCase):
         """Test incorrect request methods."""
         response = self.app.put(self.url, status=405)
         self.assertEqual(response.status_int, 405)
+        self.assertEqual(models.JSONSession.query().count(), 0)
 
         response = self.app.delete(self.url, status=405)
         self.assertEqual(response.status_int, 405)
+        self.assertEqual(models.JSONSession.query().count(), 0)
 
     def test_login(self):
         """Test the login page."""
         response = self.app.get(self.url)
         self.assertEqual(response.status_int, 200)
+        self.assertEqual(models.JSONSession.query().count(), 0)
         response = response.form.submit()
+        self.assertEqual(models.JSONSession.query().count(), 0)
         self.assertEqual(response.status_int, 302)
         self.assertTrue(response.location.endswith(self.url))
         self.assertNotIn('Set-Cookie', response.headers)
 
-        for provider, prefix in self.provider_map.iteritems():
+        for provider, redirect in self.provider_map.iteritems():
             response = self.app.get(self.url)
             self.assertEqual(response.status_int, 200)
             self.assertEqual(models.JSONSession.query().count(), 0)
             response = response.form.submit('provider:' + provider)
             self.assertEqual(response.status_int, 302)
-            self.assertTrue(response.location.startswith(prefix))
+            if not redirect.startswith('https'):
+                self.assertTrue(response.location.endswith(redirect))
+                self.assertNotIn('Set-Cookie', response.headers)
+                continue
+
+            self.assertTrue(response.location.startswith(redirect))
             self.assertIn('Set-Cookie', response.headers)
             self.assertTrue(
                 response.headers['Set-Cookie'].startswith('session='))
@@ -150,16 +163,22 @@ class LoginTest(_WSGITestCase):
     def test_post(self):
         """Test the POST method directly."""
         response = self.app.post(self.url)
+        self.assertEqual(models.JSONSession.query().count(), 0)
         self.assertEqual(response.status_int, 302)
         self.assertTrue(response.location.endswith(self.url))
         self.assertNotIn('Set-Cookie', response.headers)
 
-        for provider, prefix in self.provider_map.iteritems():
+        for provider, redirect in self.provider_map.iteritems():
             self.assertEqual(models.JSONSession.query().count(), 0)
             response = self.app.post(
                 self.url, {'provider:' + provider: provider})
             self.assertEqual(response.status_int, 302)
-            self.assertTrue(response.location.startswith(prefix))
+            if not redirect.startswith('https'):
+                self.assertTrue(response.location.endswith(redirect))
+                self.assertNotIn('Set-Cookie', response.headers)
+                continue
+
+            self.assertTrue(response.location.startswith(redirect))
             self.assertIn('Set-Cookie', response.headers)
             self.assertTrue(
                 response.headers['Set-Cookie'].startswith('session='))
@@ -182,50 +201,58 @@ class _CallbackTestCase(_WSGITestCase):
     def setUp(self):
         super(_CallbackTestCase, self).setUp()
 
-        # Just so the tests below have something on which to run
-        self.url = self.uri_for('google_callback')
-        """String URL for the GoogleCallback route."""
+        self.url = self.get_self_url()
+        """String URL for the route being tested."""
+
+        self.after_logout = self.uri_for('home')
+        """String URL for the route after logging out or when login fails."""
+
+        self.assertEqual(models.JSONSession.query().count(), 0)
+
+    def get_self_url(self):
+        """Return the string URL for the route being tested."""
+        return self.uri_for('github_callback')
 
     def test_strict_slash(self):
         """Test there is no slash at the end of the URL."""
         self.assertFalse(self.url.endswith('/'))
         response = self.app.get(self.url + '/', status=404)
         self.assertEqual(response.status_int, 404)
+        self.assertEqual(models.JSONSession.query().count(), 0)
 
     def test_bad_methods(self):
         """Test incorrect request methods."""
         response = self.app.post(self.url, status=405)
         self.assertEqual(response.status_int, 405)
+        self.assertEqual(models.JSONSession.query().count(), 0)
 
         response = self.app.put(self.url, status=405)
         self.assertEqual(response.status_int, 405)
+        self.assertEqual(models.JSONSession.query().count(), 0)
 
         response = self.app.delete(self.url, status=405)
         self.assertEqual(response.status_int, 405)
+        self.assertEqual(models.JSONSession.query().count(), 0)
 
     def test_no_login(self):
         """Test when the user did not login."""
         response = self.app.get(self.url)
         self.assertEqual(models.JSONSession.query().count(), 0)
         self.assertEqual(response.status_int, 302)
-        self.assertTrue(response.location.endswith(self.uri_for('home')))
+        self.assertTrue(response.location.endswith(self.after_logout))
         self.assertNotIn('Set-Cookie', response.headers)
 
 class LogoutTest(_CallbackTestCase):
-    def setUp(self):
-        super(_CallbackTestCase, self).setUp()
-
-        self.url = self.uri_for('logout')
-        """String URL for the logout route."""
-
-        self.assertEqual(models.JSONSession.query().count(), 0)
+    def get_self_url(self):
+        """Return the string URL for the route being tested."""
+        return self.uri_for('logout')
 
     def test_no_login(self):
         """Test logging out without logging in first."""
         response = self.app.get(self.url)
         self.assertEqual(models.JSONSession.query().count(), 0)
         self.assertEqual(response.status_int, 302)
-        self.assertTrue(response.location.endswith(self.uri_for('home')))
+        self.assertTrue(response.location.endswith(self.after_logout))
         # Test the cookie is marked for deletion
         self.assertIn('Set-Cookie', response.headers)
         self.assertTrue(
@@ -235,8 +262,7 @@ class LogoutTest(_CallbackTestCase):
         """Test logging out when logged in."""
         session = models.JSONSession._create({
             'hash': 'foo',
-            'state': 'bar',
-            'user_id': 'baz'
+            'state': 'bar'
         })
         self.set_session_ID(session.key.string_id())
         self.assertEqual(models.JSONSession.query().count(), 1)
@@ -244,52 +270,16 @@ class LogoutTest(_CallbackTestCase):
         self.assertEqual(models.JSONSession.query().count(), 0)
         self.assertIsNone(session.key.get())
         self.assertEqual(response.status_int, 302)
-        self.assertTrue(response.location.endswith(self.uri_for('home')))
+        self.assertTrue(response.location.endswith(self.after_logout))
         # Test the cookie is marked for deletion
         self.assertIn('Set-Cookie', response.headers)
         self.assertTrue(
             response.headers['Set-Cookie'].startswith('session=; Max-Age=0;'))
 
-class GitHubTest(_CallbackTestCase):
-    def setUp(self):
-        super(_CallbackTestCase, self).setUp()
-
-        self.url = self.uri_for('github_callback')
-        """String URL for the GitHubCallback route."""
-
-        self.assertEqual(models.JSONSession.query().count(), 0)
-
-    def test_error(self):
-        """Test when there is an error with the login."""
-        for params in [
-            {'error': 'error'},
-            {'error_description': 'Login error'},
-            {'error': 'error',
-             'error_description': 'Login error'}]:
-            response = self.app.get(self.url, params)
-            self.assertEqual(models.JSONSession.query().count(), 0)
-            self.assertEqual(response.status_int, 302)
-            self.assertTrue(response.location.endswith(self.uri_for('home')))
-            self.assertNotIn('Set-Cookie', response.headers)
-
-    def test_bad_state(self):
-        """Test when the state is incorrect."""
-        session = models.JSONSession._create({'state': 'foobar'})
-        self.set_session_ID(session.key.string_id())
-        response = self.app.get(self.url, {'state': 'state'})
-        self.assertEqual(models.JSONSession.query().count(), 1)
-        self.assertEqual(response.status_int, 302)
-        self.assertTrue(response.location.endswith(self.uri_for('home')))
-        self.assertNotIn('Set-Cookie', response.headers)
-
 class GoogleTest(_CallbackTestCase):
-    def setUp(self):
-        super(_CallbackTestCase, self).setUp()
-
-        self.url = self.uri_for('google_callback')
-        """String URL for the GoogleCallback route."""
-
-        self.assertEqual(models.JSONSession.query().count(), 0)
+    def get_self_url(self):
+        """Return the string URL for the route being tested."""
+        return self.uri_for('google_callback')
 
     def test_login(self):
         """Test when the user did login."""
@@ -298,13 +288,11 @@ class GoogleTest(_CallbackTestCase):
             USER_ID='test', USER_EMAIL='test@example.com', overwrite=True)
         response = self.app.get(self.url)
         self.assertEqual(models.JSONSession.query().count(), 1)
-        expected_hash = zenith_cross.hash_user_id(
-            'test', zenith_cross.CONFIG['Google'].get('method'),
-            zenith_cross.CONFIG['Google'].get('pepper'), 'google_')
+        flow = zenith_cross.PROVIDER_MAP.get('Google')
+        expected_hash = flow.get_hashed_user_id(user_id='test')
         session = models.JSONSession.query().get()
         self.assertEqual(session.data, {
-            'hash': expected_hash,
-            'user_id': 'test'
+            'hash': expected_hash
         })
         self.assertEqual(response.status_int, 302)
         self.assertTrue(response.location.endswith(self.uri_for('private')))
@@ -316,19 +304,101 @@ class GoogleTest(_CallbackTestCase):
         self.assertEqual(session.key.string_id(),
                          self.get_session_ID(cookie_map['session']))
 
-        # Test the private page is visible since we are logged in
+        # Test the private page is visible because we are logged in
         # Need to force TestApp to send the session cookie
         self.set_session_ID(session.key.string_id())
         response = response.follow()
         self.assertEqual(models.JSONSession.query().count(), 1)
         self.assertEqual(response.status_int, 200)
         self.assertIn('<dd>{0}</dd>'.format(expected_hash), response.body)
-        self.assertIn('<dd>test</dd>', response.body)
         cookie_map = self.app.cookies
         self.assertEqual(len(cookie_map), 1)
         self.assertIn('session', cookie_map)
         self.assertEqual(session.key.string_id(),
                          self.get_session_ID(cookie_map['session']))
+
+class LinkedInTest(_CallbackTestCase):
+    def get_self_url(self):
+        """Return the string URL for the route being tested."""
+        return self.uri_for('linkedin_callback')
+
+    def test_error(self):
+        """Test when there is an error with the login."""
+        for params in [
+            {'error': 'error'},
+            {'error_description': 'Login error'},
+            {'error': 'error',
+             'error_description': 'Login error'}]:
+            response = self.app.get(self.url, params)
+            self.assertEqual(models.JSONSession.query().count(), 0)
+            self.assertEqual(response.status_int, 302)
+            self.assertTrue(response.location.endswith(self.after_logout))
+            self.assertNotIn('Set-Cookie', response.headers)
+
+    def test_bad_state(self):
+        """Test when the state is incorrect."""
+        session = models.JSONSession._create({'state': 'foobar'})
+        for params in [
+            {},
+            {'state': ''},
+            {'state': 'bar'},
+            {'state': 'baz'},
+            # Test an invalid temporary authorization code parameter
+            {'state': 'foobar', 'code': ''}]:
+            self.set_session_ID(session.key.string_id())
+            response = self.app.get(self.url, params)
+            # The session is not deleted because the correct callback may come
+            self.assertEqual(models.JSONSession.query().count(), 1)
+            self.assertEqual(response.status_int, 302)
+            self.assertTrue(response.location.endswith(self.after_logout))
+            self.assertNotIn('Set-Cookie', response.headers)
+
+class FacebookTest(LinkedInTest):
+    def get_self_url(self):
+        """Return the string URL for the route being tested."""
+        return self.uri_for('facebook_callback')
+
+    def test_error(self):
+        """Test when there is an error with the login."""
+        super(FacebookTest, self).test_error()
+        for params in [
+            {'error_reason': 'Error reason'},
+            {'error': 'error',
+             'error_description': 'Login error',
+             'error_reason': 'Error reason'}]:
+            response = self.app.get(self.url, params)
+            self.assertEqual(models.JSONSession.query().count(), 0)
+            self.assertEqual(response.status_int, 302)
+            self.assertTrue(response.location.endswith(self.after_logout))
+            self.assertNotIn('Set-Cookie', response.headers)
+
+class GitHubTest(LinkedInTest):
+    def get_self_url(self):
+        """Return the string URL for the route being tested."""
+        return self.uri_for('github_callback')
+
+class TwitterTest(LinkedInTest):
+    def get_self_url(self):
+        """Return the string URL for the route being tested."""
+        return self.uri_for('twitter_callback')
+
+    def test_bad_state(self):
+        """Test when the oauth_token is incorrect."""
+        session = models.JSONSession._create({'oauth_token': 'foobar'})
+        for params in [
+            {},
+            {'oauth_token': ''},
+            {'oauth_token': 'bar'},
+            {'oauth_token': 'baz'},
+            # Test an invalid oauth_verifier
+            {'oauth_token': 'foobar', 'oauth_verifier': ''}]:
+            self.set_session_ID(session.key.string_id())
+            response = self.app.get(self.url, params)
+            # The session is not deleted because the correct callback may come
+            self.assertEqual(models.JSONSession.query().count(), 1)
+            self.assertEqual(response.status_int, 302)
+            self.assertTrue(response.location.endswith(self.after_logout))
+            self.assertNotIn('Set-Cookie', response.headers)
 
 class FrontendTest(_WSGITestCase):
     def test_home(self):
@@ -360,20 +430,17 @@ class FrontendTest(_WSGITestCase):
         # Simulate logging in with a session
         session = models.JSONSession._create({
             'hash': 'foo',
-            'state': 'bar',
-            'user_id': 'baz'
+            'state': 'bar'
         })
         self.set_session_ID(session.key.string_id())
         response = self.app.get(url)
         self.assertEqual(response.status_int, 200)
         self.assertIn('<dd>foo</dd>', response.body)
         self.assertIn('<dd>bar</dd>', response.body)
-        self.assertIn('<dd>baz</dd>', response.body)
 
         # Test missing "hash" key is the same as not logged in
         session.data = {
-            'state': 'bar',
-            'user_id': 'baz'
+            'state': 'bar'
         }
         session.put()
         response = self.app.get(url)
@@ -395,8 +462,7 @@ class FrontendTest(_WSGITestCase):
         sessions = [
             models.JSONSession._create({
                 'hash': 'foo',
-                'state': 'bar',
-                'user_id': 'baz'
+                'state': 'bar'
             }),
             models.JSONSession._create({
                 'hash': 'tic',
@@ -413,7 +479,8 @@ class FrontendTest(_WSGITestCase):
             response = self.app.get(self.uri_for('private'))
             self.assertEqual(response.status_int, 200)
             for key, value in session.data.iteritems():
-                self.assertIn('<dd>{0}</dd>'.format(value), response.body)
+                if key != 'user_id':
+                    self.assertIn('<dd>{0}</dd>'.format(value), response.body)
             # Test none of the other sessions leaked through
             for s in sessions:
                 if s.key.string_id() == session.key.string_id():

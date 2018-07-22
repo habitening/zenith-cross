@@ -1,7 +1,5 @@
 """The WSGI application and the handlers in the frontend module."""
 
-import os
-
 import webapp2
 from webapp2_extras import routes
 from webapp2_extras import security
@@ -28,15 +26,15 @@ class PrivateHandler(base_handler.BaseHandler):
         We cannot simply extend dispatch() in BaseHandler because self.session
         requires self.session_store be set first.
 
-        An alternative approach is to create a decorator but in that case you
-        would need to decorate every method. That is prone to accidentally
-        missing one and opening a security hole. Overriding dispatch like we do
-        here protects every method of the handler.
-
-        Yet another approach is to have the checking code in BaseHandler under
-        a class attribute flag. Handlers that require the check can set the
-        flag to True. This means the superclass needs to know about the
-        subclass. I prefer the onus of extending be on the subclass.
+        Alternative approaches considered:
+        1. Create a decorator
+            You would need to decorate every method. That is prone to
+            accidentally missing one and opening a security hole. Overriding
+            dispatch like we do here protects every method of the handler.
+        2. Checking code in BaseHandler under a class attribute flag
+            Handlers that require the check can set the flag to True.
+            This means the superclass needs to know about the subclass.
+            I prefer the onus of extending be on the subclass.
         """
         self.session_store = sessions.get_store(request=self.request)
         if 'hash' not in self.session:
@@ -52,8 +50,7 @@ class PrivateHandler(base_handler.BaseHandler):
         """Show a private page only accessible by a logged in user."""
         values = {
             'hash': self.session.get('hash'),
-            'state': self.session.get('state'),
-            'user_id': self.session.get('user_id')
+            'state': self.session.get('state')
         }
         self.render_template('private.html', values)
 
@@ -71,13 +68,10 @@ class SecretHandler(base_handler.BaseHandler):
         self.render_template('secret.html', values)
 
 
-# Detect if the code is running on the development web server
-_debug = os.environ.get('SERVER_SOFTWARE', '').startswith('Dev')
-
 _config = {
     'webapp2_extras.sessions': {
         # This is the only required configuration key
-        'secret_key': zenith_cross.CONFIG['webapp2'].get('secret_key'),
+        'secret_key': zenith_cross.SECRET_KEY,
         # Default cookie name (same as Flask; Django uses "sessionid")
         'cookie_name': 'session',
         # Tie session expiration to the cookie
@@ -91,7 +85,7 @@ _config = {
             # Make the cookie valid for all paths of the application
             'path': '/',
             # The development web server does not support HTTPS
-            'secure': not _debug,
+            'secure': not zenith_cross.DEBUG,
             # Disallow JavaScript access to the cookie
             'httponly': True
         }
@@ -102,10 +96,17 @@ _config = {
 app = webapp2.WSGIApplication([
     routes.PathPrefixRoute(r'/login', [
         # The redirect_uri for each identity provider
+        # Comment out or remove as needed
+        webapp2.Route(r'/facebook', handler=zenith_cross.FacebookCallback,
+                      name='facebook_callback'),
         webapp2.Route(r'/github', handler=zenith_cross.GitHubCallback,
                       name='github_callback'),
         webapp2.Route(r'/google', handler=zenith_cross.GoogleCallback,
                       name='google_callback'),
+        webapp2.Route(r'/linkedin', handler=zenith_cross.LinkedInCallback,
+                      name='linkedin_callback'),
+        webapp2.Route(r'/twitter', handler=zenith_cross.TwitterCallback,
+                      name='twitter_callback'),
         # Default to the identity provider selection page
         webapp2.Route('/', handler=zenith_cross.LoginHandler, name='login')
     ]),
@@ -116,4 +117,4 @@ app = webapp2.WSGIApplication([
     routes.RedirectRoute(r'/secret/', handler=SecretHandler,
                          strict_slash=True, name='secret'),
     webapp2.Route(r'/', handler=HomeHandler, name='home')
-], config=_config, debug=_debug)
+], config=_config, debug=zenith_cross.DEBUG)
