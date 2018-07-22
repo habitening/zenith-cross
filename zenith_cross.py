@@ -176,8 +176,17 @@ class GoogleFlow(object):
     def get_hashed_user_id(self, user_id=None, **kwargs):
         """Return the hashed user ID.
 
+        I abused the Python keyword argument machinery here to avoid having to
+        rewrite this method for each class.
+
+        This method only accepts keyword arguments to support the polymorphic
+        _get_user_id() method it calls. Those arguments should match the
+        underlying _get_user_id() call if user_id is not valid.
+
         Args:
             user_id: Optional string user ID to hash.
+            **kwargs: Optional keyword arguments to pass to _get_user_id() to
+                retrieve the user ID.
         """
         if not _is_valid(user_id):
             user_id = self._get_user_id(**kwargs)
@@ -284,7 +293,7 @@ class LinkedInFlow(GoogleFlow):
         result = _parse_JSON_response(response)
         return _get_string_value(result, 'access_token')
 
-    def _get_user_id(cls, access_token):
+    def _get_user_id(self, access_token=None, **kwargs):
         """Return the LinkedIn user ID using access_token.
 
         Args:
@@ -307,15 +316,15 @@ class FacebookFlow(LinkedInFlow):
 
     def _get_authorization_endpoint(self):
         """Return the string URL to the Facebook authorization endpoint."""
-        return 'https://www.facebook.com/v2.12/dialog/oauth'
+        return 'https://www.facebook.com/v3.0/dialog/oauth'
 
     def _get_token_endpoint(self):
         """Return the string URL to the Facebook token endpoint."""
-        return 'https://graph.facebook.com/v2.12/oauth/access_token'
+        return 'https://graph.facebook.com/v3.0/oauth/access_token'
 
     def _get_profile_endpoint(self):
         """Return the string URL to the Facebook public profile endpoint."""
-        return 'https://graph.facebook.com/v2.12/me'
+        return 'https://graph.facebook.com/v3.0/me'
 
     def create_login_url(self, redirect_uri, state):
         """Return the URL to request a user's Facebook identity.
@@ -375,7 +384,7 @@ class FacebookFlow(LinkedInFlow):
         return hmac.new(self.client_secret, access_token,
                         hashlib.sha256).hexdigest()
 
-    def _get_user_id(cls, access_token):
+    def _get_user_id(self, access_token=None, **kwargs):
         """Return the Facebook user ID using access_token.
 
         Args:
@@ -492,7 +501,7 @@ class GitHubFlow(LinkedInFlow):
         result = _parse_JSON_response(response)
         return _get_string_value(result, 'access_token')
 
-    def _get_user_id(cls, access_token):
+    def _get_user_id(self, access_token=None, **kwargs):
         """Return the GitHub user ID using access_token.
 
         Args:
@@ -767,7 +776,7 @@ class TwitterFlow(GoogleFlow):
             return token, secret
         return None, None
 
-    def _get_user_id(self, token, secret):
+    def _get_user_id(self, token=None, secret=None, **kwargs):
         """Return the Twitter user ID using the access token.
 
         Args:
@@ -873,7 +882,7 @@ else:
                                                    'production.yaml'))
     """String path to the production YAML configuration file."""
 
-PROVIDER_MAP, SECRET_KEY = _parse_config(_PATH_TO_CONFIG)
+_PROVIDER_MAP, SECRET_KEY = _parse_config(_PATH_TO_CONFIG)
 """Dictionary of identity providers as GoogleFlow subclasses."""
 """String secret key for webapp2.sessions."""
 
@@ -894,7 +903,7 @@ class LoginHandler(base_handler.BaseHandler):
 
     def get(self):
         """Show a form with the available identity providers alphabetically."""
-        providers = PROVIDER_MAP.keys()
+        providers = _PROVIDER_MAP.keys()
         providers.sort()
         values = {
             'providers': providers
@@ -903,7 +912,7 @@ class LoginHandler(base_handler.BaseHandler):
 
     def post(self):
         """Redirect the user to the selected identity provider."""
-        for name, flow in PROVIDER_MAP.iteritems():
+        for name, flow in _PROVIDER_MAP.iteritems():
             key = 'provider:' + name.lower()
             if key not in self.request.POST:
                 continue
@@ -915,6 +924,8 @@ class LoginHandler(base_handler.BaseHandler):
                 scheme = 'https'
             callback_url = self.uri_for(name.lower() + '_callback',
                                         _scheme=scheme)
+            if not _is_valid(callback_url):
+                break
             state = security.generate_random_string(
                 length=32, pool=security.ALPHANUMERIC)
             # Store the state in the session so it can be verified on callback
@@ -973,7 +984,7 @@ class LinkedInCallback(base_handler.BaseHandler):
 
     def get_flow(self):
         """Return the LinkedInFlow object for this callback handler."""
-        flow = PROVIDER_MAP.get('LinkedIn')
+        flow = _PROVIDER_MAP.get('LinkedIn')
         if not isinstance(flow, LinkedInFlow):
             logging.error(
                 'LinkedIn was not configured as an identity provider!')
@@ -989,7 +1000,7 @@ class FacebookCallback(LinkedInCallback):
 
     def get_flow(self):
         """Return the FacebookFlow object for this callback handler."""
-        flow = PROVIDER_MAP.get('Facebook')
+        flow = _PROVIDER_MAP.get('Facebook')
         if not isinstance(flow, FacebookFlow):
             logging.error(
                 'Facebook was not configured as an identity provider!')
@@ -998,7 +1009,7 @@ class FacebookCallback(LinkedInCallback):
 class GitHubCallback(LinkedInCallback):
     def get_flow(self):
         """Return the GitHubFlow object for this callback handler."""
-        flow = PROVIDER_MAP.get('GitHub')
+        flow = _PROVIDER_MAP.get('GitHub')
         if not isinstance(flow, GitHubFlow):
             logging.error(
                 'GitHub was not configured as an identity provider!')
@@ -1007,7 +1018,7 @@ class GitHubCallback(LinkedInCallback):
 class GoogleCallback(base_handler.BaseHandler):
     def get(self):
         """Handle the Google redirect back to us."""
-        flow = PROVIDER_MAP.get('Google')
+        flow = _PROVIDER_MAP.get('Google')
         if not isinstance(flow, GoogleFlow):
             logging.error(
                 'Google was not configured as an identity provider!')
@@ -1040,7 +1051,7 @@ class TwitterCallback(base_handler.BaseHandler):
         if not _is_valid(verifier):
             return self.after_logout()
         secret = self.session.get('oauth_token_secret')
-        flow = PROVIDER_MAP.get('Twitter')
+        flow = _PROVIDER_MAP.get('Twitter')
         if not isinstance(flow, TwitterFlow):
             logging.error(
                 'Twitter was not configured as an identity provider!')
