@@ -289,7 +289,7 @@ class GoogleTest(_CallbackTestCase):
         response = self.app.get(self.url)
         self.assertEqual(models.JSONSession.query().count(), 1)
         flow = zenith_cross._PROVIDER_MAP.get('Google')
-        expected_hash = flow.get_hashed_user_id(user_id='test')
+        expected_hash = flow._hash_user_id('test')
         session = models.JSONSession.query().get()
         self.assertEqual(session.data, {
             'hash': expected_hash

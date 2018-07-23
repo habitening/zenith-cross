@@ -80,7 +80,7 @@ def _is_valid(token):
     return (isinstance(token, basestring) and (len(token) > 0))
 
 def _get_string_value(dictionary, key, default=None):
-    """Return the string value for key in dictionary or default."""
+    """Return the valid string value for key in dictionary or default."""
     if isinstance(dictionary, dict) and isinstance(key, str):
         value = dictionary.get(key)
         if _is_valid(value):
@@ -102,7 +102,7 @@ def _hash_user_id(user_id, method, pepper=None, prefix=None):
     storing the user_id in plaintext, defeating the original purpose.
 
     Args:
-        user_id: String user ID from an identity provider.
+        user_id: String user ID from an identity provider to hash.
         method: String name of a method from hashlib to use to hash
             the user ID.
         pepper: Optional string secret constant stored in the configuration.
@@ -164,35 +164,38 @@ class GoogleFlow(object):
         # Delegate to the App Engine Users API
         return users.create_login_url(redirect_uri)
 
-    def _get_user_id(self, **kwargs):
-        """Return the Google user ID."""
+    def _hash_user_id(self, user_id):
+        """Return user_id hashed with self.method and self.pepper or None.
+
+        Args:
+            user_id: String user ID to hash.
+        Returns:
+            String user_id hashed with self.method and self.pepper or None.
+        """
+        if _is_valid(user_id):
+            return _hash_user_id(user_id, self.method, self.pepper,
+                                 self.get_name().lower() + '_')
+        return None
+
+    def get_user_id(self, hashed=True):
+        """Return the hashed Google user ID.
+
+        Args:
+            hashed: Optional boolean flag indicating whether to hash the
+                Google user ID. Defaults to True. Pass False to get the raw
+                Google user ID for debugging.
+        Returns:
+            String hashed Google user ID if hashed is True.
+            String raw Google user ID if hashed is False.
+        """
         current_user = users.get_current_user()
         if isinstance(current_user, users.User):
             user_id = current_user.user_id()
             if _is_valid(user_id):
-                return user_id
-        return None
-
-    def get_hashed_user_id(self, user_id=None, **kwargs):
-        """Return the hashed user ID.
-
-        I abused the Python keyword argument machinery here to avoid having to
-        rewrite this method for each class.
-
-        This method only accepts keyword arguments to support the polymorphic
-        _get_user_id() method it calls. Those arguments should match the
-        underlying _get_user_id() call if user_id is not valid.
-
-        Args:
-            user_id: Optional string user ID to hash.
-            **kwargs: Optional keyword arguments to pass to _get_user_id() to
-                retrieve the user ID.
-        """
-        if not _is_valid(user_id):
-            user_id = self._get_user_id(**kwargs)
-        if _is_valid(user_id):
-            return _hash_user_id(user_id, self.method, self.pepper,
-                                 self.get_name().lower() + '_')
+                if hashed:
+                    return self._hash_user_id(user_id)
+                else:
+                    return user_id
         return None
 
 class LinkedInFlow(GoogleFlow):
@@ -293,13 +296,17 @@ class LinkedInFlow(GoogleFlow):
         result = _parse_JSON_response(response)
         return _get_string_value(result, 'access_token')
 
-    def _get_user_id(self, access_token=None, **kwargs):
-        """Return the LinkedIn user ID using access_token.
+    def get_user_id(self, access_token, hashed=True):
+        """Return the hashed LinkedIn user ID using access_token.
 
         Args:
             access_token: String access token.
+            hashed: Optional boolean flag indicating whether to hash the
+                LinkedIn user ID. Defaults to True. Pass False to get the raw
+                LinkedIn user ID for debugging.
         Returns:
-            String LinkedIn user ID.
+            String hashed LinkedIn user ID if hashed is True.
+            String raw LinkedIn user ID if hashed is False.
         """
         if not _is_valid(access_token):
             return None
@@ -307,7 +314,11 @@ class LinkedInFlow(GoogleFlow):
         headers = {'Authorization': 'Bearer ' + access_token}
         response = _fetch_url(self._get_profile_endpoint(), headers=headers)
         result = _parse_JSON_response(response)
-        return _get_string_value(result, 'id')
+        user_id = _get_string_value(result, 'id')
+        if hashed:
+            return self._hash_user_id(user_id)
+        else:
+            return user_id
 
 class FacebookFlow(LinkedInFlow):
     def get_name(self):
@@ -384,13 +395,17 @@ class FacebookFlow(LinkedInFlow):
         return hmac.new(self.client_secret, access_token,
                         hashlib.sha256).hexdigest()
 
-    def _get_user_id(self, access_token=None, **kwargs):
-        """Return the Facebook user ID using access_token.
+    def get_user_id(self, access_token, hashed=True):
+        """Return the hashed Facebook user ID using access_token.
 
         Args:
             access_token: String access token.
+            hashed: Optional boolean flag indicating whether to hash the
+                Facebook user ID. Defaults to True. Pass False to get the raw
+                Facebook user ID for debugging.
         Returns:
-            String Facebook user ID.
+            String hashed Facebook user ID if hashed is True.
+            String raw Facebook user ID if hashed is False.
         """
         if not _is_valid(access_token):
             return None
@@ -403,7 +418,11 @@ class FacebookFlow(LinkedInFlow):
         url = self._get_profile_endpoint() + '?' + urllib.urlencode(parameters)
         response = _fetch_url(url)
         result = _parse_JSON_response(response)
-        return _get_string_value(result, 'id')
+        user_id = _get_string_value(result, 'id')
+        if hashed:
+            return self._hash_user_id(user_id)
+        else:
+            return user_id
 
 class GitHubFlow(LinkedInFlow):
 
@@ -501,13 +520,17 @@ class GitHubFlow(LinkedInFlow):
         result = _parse_JSON_response(response)
         return _get_string_value(result, 'access_token')
 
-    def _get_user_id(self, access_token=None, **kwargs):
-        """Return the GitHub user ID using access_token.
+    def get_user_id(self, access_token, hashed=True):
+        """Return the hashed GitHub user ID using access_token.
 
         Args:
             access_token: String access token.
+            hashed: Optional boolean flag indicating whether to hash the
+                GitHub user ID. Defaults to True. Pass False to get the raw
+                GitHub user ID for debugging.
         Returns:
-            String GitHub user ID.
+            String hashed GitHub user ID if hashed is True.
+            String raw GitHub user ID if hashed is False.
         """
         if not _is_valid(access_token):
             return None
@@ -521,7 +544,11 @@ class GitHubFlow(LinkedInFlow):
             data = result.get('data')
             if isinstance(data, dict):
                 data = data.get('viewer')
-                return _get_string_value(data, 'id')
+                user_id = _get_string_value(data, 'id')
+                if hashed:
+                    return self._hash_user_id(user_id)
+                else:
+                    return user_id
         return None
 
 class TwitterFlow(GoogleFlow):
@@ -776,14 +803,18 @@ class TwitterFlow(GoogleFlow):
             return token, secret
         return None, None
 
-    def _get_user_id(self, token=None, secret=None, **kwargs):
-        """Return the Twitter user ID using the access token.
+    def get_user_id(self, token, secret, hashed=True):
+        """Return the hashed Twitter user ID using the access token.
 
         Args:
             token: String access token.
             secret: String token secret.
+            hashed: Optional boolean flag indicating whether to hash the
+                Twitter user ID. Defaults to True. Pass False to get the raw
+                Twitter user ID for debugging.
         Returns:
-            String Twitter user ID.
+            String hashed Twitter user ID if hashed is True.
+            String raw Twitter user ID if hashed is False.
         """
         if not _is_valid(token):
             return None
@@ -798,7 +829,11 @@ class TwitterFlow(GoogleFlow):
         response = self._twitter_fetch(self._get_profile_endpoint(),
                                        parameters, 'GET', token, secret)
         result = _parse_JSON_response(response)
-        return _get_string_value(result, 'id_str')
+        user_id = _get_string_value(result, 'id_str')
+        if hashed:
+            return self._hash_user_id(user_id)
+        else:
+            return user_id
 
 
 def _parse_config(path):
@@ -973,7 +1008,7 @@ class LinkedInCallback(base_handler.BaseHandler):
         if not _is_valid(token):
             return self.after_logout()
 
-        hashed_user_id = flow.get_hashed_user_id(access_token=token)
+        hashed_user_id = flow.get_user_id(token)
         if _is_valid(hashed_user_id):
             self.session['access_token'] = token
             self.session['hash'] = hashed_user_id
@@ -1024,7 +1059,7 @@ class GoogleCallback(base_handler.BaseHandler):
                 'Google was not configured as an identity provider!')
             return self.after_logout()
 
-        hashed_user_id = flow.get_hashed_user_id()
+        hashed_user_id = flow.get_user_id()
         if _is_valid(hashed_user_id):
             self.session['hash'] = hashed_user_id
             return self.after_login()
@@ -1063,8 +1098,7 @@ class TwitterCallback(base_handler.BaseHandler):
         if not _is_valid(access_secret):
             return self.after_logout()
 
-        hashed_user_id = flow.get_hashed_user_id(token=access_token,
-                                                 secret=access_secret)
+        hashed_user_id = flow.get_user_id(access_token, access_secret)
         if _is_valid(hashed_user_id):
             self.session['access_token'] = access_token
             self.session['access_token_secret'] = access_secret

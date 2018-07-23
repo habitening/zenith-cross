@@ -47,7 +47,7 @@ class HelperTest(test.BaseTestCase):
             self.assertTrue(zenith_cross._is_valid(value))
 
     def test_get_string_value(self):
-        """Test getting the string value for a key in a dictionary."""
+        """Test getting the valid string value for a key in a dictionary."""
         for value in [None, 42, '', []]:
             self.assertIsNone(zenith_cross._get_string_value(value, 'foobar'))
             self.assertEqual(
@@ -63,16 +63,21 @@ class HelperTest(test.BaseTestCase):
             'baz': u'fo\u00f6b\u00e4r'
         }
         self.assertIsNone(zenith_cross._get_string_value(dictionary, 'foobar'))
-        self.assertIsNone(zenith_cross._get_string_value(dictionary, 'foo'))
         self.assertEqual(
             zenith_cross._get_string_value(dictionary, 'foobar', 'none'),
             'none')
+        self.assertIsNone(zenith_cross._get_string_value(dictionary, 'foo'))
         self.assertEqual(
             zenith_cross._get_string_value(dictionary, 'foo', 'none'), 'none')
         self.assertEqual(zenith_cross._get_string_value(dictionary, 'bar'),
                          'foobar')
+        self.assertEqual(
+            zenith_cross._get_string_value(dictionary, 'bar', 'baz'), 'foobar')
         self.assertEqual(zenith_cross._get_string_value(dictionary, 'baz'),
                          u'fo\u00f6b\u00e4r')
+        self.assertEqual(
+            zenith_cross._get_string_value(dictionary, 'baz', 'baz'),
+            u'fo\u00f6b\u00e4r')
 
     def test_hash_user_id(self):
         """Test hashing a user ID."""
@@ -105,15 +110,15 @@ class HelperTest(test.BaseTestCase):
                     user_id, method, prefix='prefix_'), 'prefix_' + expected)
 
                 expected = security.hash_password(
-                    user_id, method, pepper='barbaz')
+                    user_id, method, pepper='pepper')
                 self.assertEqual(
-                    zenith_cross._hash_user_id(user_id, method, 'barbaz'),
+                    zenith_cross._hash_user_id(user_id, method, 'pepper'),
                     expected)
                 for prefix in [None, 42, '', []]:
                     self.assertEqual(zenith_cross._hash_user_id(
-                        user_id, method, 'barbaz', prefix), expected)
+                        user_id, method, 'pepper', prefix), expected)
                 self.assertEqual(zenith_cross._hash_user_id(
-                    user_id, method, 'barbaz', 'prefix_'),
+                    user_id, method, 'pepper', 'prefix_'),
                                  'prefix_' + expected)
 
     def test_parse_config(self):
@@ -151,7 +156,7 @@ class HelperTest(test.BaseTestCase):
         self.assertEqual(secret_key, 'my-super-secret-key')
 
     def test_constants(self):
-        """Test the zenith_cross constants."""
+        """Test the zenith_cross module constants."""
         if zenith_cross.DEBUG:
             expected = os.path.abspath(os.path.join(os.path.dirname(__file__),
                                                     'development.yaml'))
@@ -188,7 +193,7 @@ class GoogleFlowTest(test.BaseTestCase):
         self.assertEqual(self.flow.method, 'sha256')
         self.assertEqual(self.flow.pepper, 'pepper')
         self.assertEqual(self.flow.get_name(), 'Google')
-        self.assertEqual(self.flow.get_hashed_user_id(user_id='foobar'),
+        self.assertEqual(self.flow._hash_user_id('foobar'),
                          zenith_cross._hash_user_id(
                              'foobar', 'sha256', 'pepper', 'google_'))
 
@@ -218,33 +223,21 @@ class GoogleFlowTest(test.BaseTestCase):
             self.assertEqual(self.flow.create_login_url(uri, uri, uri),
                              expected)
 
-    def test_get_user_id(self):
-        """Test getting the Google user ID."""
-        self.assertIsNone(self.flow._get_user_id())
-        self.assertIsNone(self.flow._get_user_id(foo=None))
-        self.assertIsNone(self.flow._get_user_id(foo=None, bar=42))
-
-        # Simulate a login in the testbed
-        expected = 'test'
-        self.testbed.setup_env(
-            USER_ID=expected, USER_EMAIL='test@example.com', overwrite=True)
-        self.assertEqual(self.flow._get_user_id(), expected)
-        self.assertEqual(self.flow._get_user_id(foo=None), expected)
-        self.assertEqual(self.flow._get_user_id(foo=None, bar=42), expected)
-
-    def test_get_hashed_user_id(self):
-        """Test getting the hashed Google user ID."""
-        self.assertIsNone(self.flow.get_hashed_user_id())
-        self.assertIsNone(self.flow.get_hashed_user_id(foo=None))
-        self.assertIsNone(self.flow.get_hashed_user_id(foo=None, bar=42))
+    def test_hash_user_id(self):
+        """Test hashing the user ID."""
         for value in [None, 42, '', []]:
-            self.assertIsNone(self.flow.get_hashed_user_id(user_id=value))
+            self.assertIsNone(self.flow._hash_user_id(value))
+        for value in ['foobar', 'baz', u'fo\u00f6b\u00e4r']:
+            self.assertEqual(self.flow._hash_user_id(value),
+                             zenith_cross._hash_user_id(
+                                 value, self.flow.method, self.flow.pepper,
+                                 self.flow.get_name().lower() + '_'))
 
-        # Test hashing a user ID
-        self.assertEqual(self.flow.get_hashed_user_id(user_id='foobar'),
-                         zenith_cross._hash_user_id(
-                             'foobar', self.flow.method, self.flow.pepper,
-                             self.flow.get_name().lower() + '_'))
+    def test_get_user_id(self):
+        """Test getting the hashed Google user ID."""
+        self.assertIsNone(self.flow.get_user_id())
+        self.assertIsNone(self.flow.get_user_id(False))
+        self.assertIsNone(self.flow.get_user_id(True))
 
         # Simulate a login in the testbed
         expected = zenith_cross._hash_user_id(
@@ -252,13 +245,9 @@ class GoogleFlowTest(test.BaseTestCase):
             self.flow.get_name().lower() + '_')
         self.testbed.setup_env(
             USER_ID='test', USER_EMAIL='test@example.com', overwrite=True)
-        self.assertEqual(self.flow.get_hashed_user_id(), expected)
-        self.assertEqual(self.flow.get_hashed_user_id(foo=None), expected)
-        self.assertEqual(self.flow.get_hashed_user_id(foo=None, bar=42),
-                         expected)
-        for value in [None, 42, '', []]:
-            self.assertEqual(self.flow.get_hashed_user_id(user_id=value),
-                             expected)
+        self.assertEqual(self.flow.get_user_id(), expected)
+        self.assertEqual(self.flow.get_user_id(False), 'test')
+        self.assertEqual(self.flow.get_user_id(True), expected)
 
 class LinkedInFlowTest(GoogleFlowTest):
     def create_flow(self):
@@ -280,12 +269,12 @@ class LinkedInFlowTest(GoogleFlowTest):
                          'https://www.linkedin.com/oauth/v2/accessToken')
         self.assertEqual(self.flow._get_profile_endpoint(),
                          'https://api.linkedin.com/v1/people/~?format=json')
-        self.assertEqual(self.flow.get_hashed_user_id(user_id='foobar'),
+        self.assertEqual(self.flow._hash_user_id('foobar'),
                          zenith_cross._hash_user_id(
                              'foobar', 'sha256', 'pepper', 'linkedin_'))
 
     def assertInitialize(self, flow_class, name):
-        """Test initializing a flow_class instance."""
+        """Test initializing a LinkedInFlow instance."""
         for value in [None, 42, [], u'fo\u00f6b\u00e4r']:
             self.assertRaises(TypeError, flow_class,
                               'sha1', value, 'client_id', 'client_secret')
@@ -339,25 +328,11 @@ class LinkedInFlowTest(GoogleFlowTest):
                 self.flow.get_access_token(value, 'redirect_uri', 'state'))
 
     def test_get_user_id(self):
-        """Test getting the user ID."""
-        for value in [None, 42, '', [], 'access_token']:
-            self.assertIsNone(self.flow._get_user_id(value))
-
-    def test_get_hashed_user_id(self):
         """Test getting the hashed user ID."""
-        self.assertIsNone(self.flow.get_hashed_user_id())
-        self.assertIsNone(self.flow.get_hashed_user_id(foo=None))
-        self.assertIsNone(self.flow.get_hashed_user_id(foo=None, bar=42))
-        self.assertIsNone(self.flow.get_hashed_user_id(
-            access_token='access_token'))
-        for value in [None, 42, '', []]:
-            self.assertIsNone(self.flow.get_hashed_user_id(user_id=value))
-
-        # Test hashing a user ID
-        self.assertEqual(self.flow.get_hashed_user_id(user_id='foobar'),
-                         zenith_cross._hash_user_id(
-                             'foobar', self.flow.method, self.flow.pepper,
-                             self.flow.get_name().lower() + '_'))
+        for value in [None, 42, '', [], 'access_token']:
+            self.assertIsNone(self.flow.get_user_id(value))
+            self.assertIsNone(self.flow.get_user_id(value, False))
+            self.assertIsNone(self.flow.get_user_id(value, True))
 
 class FacebookFlowTest(LinkedInFlowTest):
     def create_flow(self):
@@ -379,7 +354,7 @@ class FacebookFlowTest(LinkedInFlowTest):
                          'https://graph.facebook.com/v3.0/oauth/access_token')
         self.assertEqual(self.flow._get_profile_endpoint(),
                          'https://graph.facebook.com/v3.0/me')
-        self.assertEqual(self.flow.get_hashed_user_id(user_id='foobar'),
+        self.assertEqual(self.flow._hash_user_id('foobar'),
                          zenith_cross._hash_user_id(
                              'foobar', 'sha256', 'pepper', 'facebook_'))
 
@@ -415,7 +390,7 @@ class GitHubFlowTest(LinkedInFlowTest):
                          'https://github.com/login/oauth/access_token')
         self.assertEqual(self.flow._get_profile_endpoint(),
                          'https://api.github.com/graphql')
-        self.assertEqual(self.flow.get_hashed_user_id(user_id='foobar'),
+        self.assertEqual(self.flow._hash_user_id('foobar'),
                          zenith_cross._hash_user_id(
                              'foobar', 'sha256', 'pepper', 'github_'))
 
@@ -465,7 +440,7 @@ class TwitterFlowTest(LinkedInFlowTest):
             'L8qq9PZyRg6ieKGEKhZolGC0vJWLw8iEJ88DRdyOg')
 
     def test_sanity(self):
-        """Test the LinkedInFlow instance used in the tests."""
+        """Test the TwitterFlow instance used in the tests."""
         self.assertIsInstance(self.flow, zenith_cross.TwitterFlow)
         self.assertEqual(self.flow.method, 'sha256')
         self.assertEqual(self.flow.pepper, 'pepper')
@@ -481,7 +456,7 @@ class TwitterFlowTest(LinkedInFlowTest):
                          'https://api.twitter.com/oauth/access_token')
         self.assertEqual(self.flow._get_profile_endpoint(), '\
 https://api.twitter.com/1.1/account/verify_credentials.json')
-        self.assertEqual(self.flow.get_hashed_user_id(user_id='foobar'),
+        self.assertEqual(self.flow._hash_user_id('foobar'),
                          zenith_cross._hash_user_id(
                              'foobar', 'sha256', 'pepper', 'twitter_'))
 
@@ -645,22 +620,12 @@ oauth_version="1.0"')
     def test_get_user_id(self):
         """Test getting the Twitter user ID using an access token."""
         for value in [None, 42, '', []]:
-            self.assertIsNone(self.flow._get_user_id(value, 'secret'))
-            self.assertIsNone(self.flow._get_user_id('token', value))
-        self.assertIsNone(self.flow._get_user_id('token', 'secret'))
-
-    def test_get_hashed_user_id(self):
-        """Test getting the hashed Twitter user ID."""
-        self.assertIsNone(self.flow.get_hashed_user_id())
-        self.assertIsNone(self.flow.get_hashed_user_id(foo=None))
-        self.assertIsNone(self.flow.get_hashed_user_id(foo=None, bar=42))
-        self.assertIsNone(self.flow.get_hashed_user_id(
-            token='token', secret='secret'))
-        for value in [None, 42, '', []]:
-            self.assertIsNone(self.flow.get_hashed_user_id(user_id=value))
-
-        # Test hashing a user ID
-        self.assertEqual(self.flow.get_hashed_user_id(user_id='foobar'),
-                         zenith_cross._hash_user_id(
-                             'foobar', self.flow.method, self.flow.pepper,
-                             self.flow.get_name().lower() + '_'))
+            self.assertIsNone(self.flow.get_user_id(value, 'secret'))
+            self.assertIsNone(self.flow.get_user_id(value, 'secret', False))
+            self.assertIsNone(self.flow.get_user_id(value, 'secret', True))
+            self.assertIsNone(self.flow.get_user_id('token', value))
+            self.assertIsNone(self.flow.get_user_id('token', value, False))
+            self.assertIsNone(self.flow.get_user_id('token', value, True))
+        self.assertIsNone(self.flow.get_user_id('token', 'secret'))
+        self.assertIsNone(self.flow.get_user_id('token', 'secret', False))
+        self.assertIsNone(self.flow.get_user_id('token', 'secret', True))
