@@ -216,6 +216,8 @@ class GoogleFlowTest(test.BaseTestCase):
 
     def test_create_login_url(self):
         """Test the URL to request a user's Google identity."""
+        for value in [None, 42, '', []]:
+            self.assertRaises(ValueError, self.flow.create_login_url, value)
         for uri in self.redirect_uris:
             expected = users.create_login_url(uri)
             self.assertEqual(self.flow.create_login_url(uri), expected)
@@ -308,8 +310,14 @@ class LinkedInFlowTest(GoogleFlowTest):
 
     def test_create_login_url(self):
         """Test the URL to request a user's identity."""
+        for value in [None, 42, '', []]:
+            self.assertRaises(ValueError, self.flow.create_login_url,
+                              value, 'state')
         expected = self.flow._get_authorization_endpoint() + '?'
         for uri in self.redirect_uris:
+            for value in [None, 42, '', []]:
+                self.assertRaises(ValueError, self.flow.create_login_url,
+                                  uri, value)
             for state in ['foobar', 'state']:
                 login_url = self.flow.create_login_url(uri, state)
                 self.assertTrue(login_url.startswith(expected))
@@ -323,9 +331,15 @@ class LinkedInFlowTest(GoogleFlowTest):
 
     def test_get_access_token(self):
         """Test exchange the temporary code parameter for an access token."""
-        for value in [None, 42, '', [], 'code']:
+        for value in [None, 42, '', []]:
             self.assertIsNone(
                 self.flow.get_access_token(value, 'redirect_uri', 'state'))
+            self.assertRaises(ValueError, self.flow.get_access_token,
+                              'code', value, 'state')
+            self.assertRaises(ValueError, self.flow.get_access_token,
+                              'code', 'redirect_uri', value)
+        self.assertIsNone(
+            self.flow.get_access_token('code', 'redirect_uri', 'state'))
 
     def test_get_user_id(self):
         """Test getting the hashed user ID."""
@@ -600,10 +614,15 @@ oauth_version="1.0"')
 
     def test_create_login_url(self):
         """Test the URL to request a user's Twitter identity."""
+        for value in [None, 42, '', []]:
+            self.assertRaises(ValueError, self.flow.create_login_url, value)
         for uri in self.redirect_uris:
-            for state in ['foobar', 'state']:
-                self.assertEqual(self.flow.create_login_url(uri, state),
-                                 (None, None, None))
+            self.assertEqual(self.flow.create_login_url(uri),
+                             (None, None, None))
+            self.assertEqual(self.flow.create_login_url(uri, uri),
+                             (None, None, None))
+            self.assertEqual(self.flow.create_login_url(uri, uri, uri),
+                             (None, None, None))
 
     def test_get_access_token(self):
         """Test trading the request token for an access token."""

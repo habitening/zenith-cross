@@ -161,6 +161,8 @@ class GoogleFlow(object):
         Returns:
             String URL to request a user's Google identity.
         """
+        if not _is_valid(redirect_uri):
+            raise ValueError('redirect_uri must be a non-empty string.')
         # Delegate to the App Engine Users API
         return users.create_login_url(redirect_uri)
 
@@ -256,6 +258,11 @@ class LinkedInFlow(GoogleFlow):
         Returns:
             String URL to request a user's LinkedIn identity.
         """
+        if not _is_valid(redirect_uri):
+            raise ValueError('redirect_uri must be a non-empty string.')
+        if not _is_valid(state):
+            raise ValueError('state must be a non-empty string.')
+
         parameters = {
             'client_id': self.client_id,
             'redirect_uri': redirect_uri,
@@ -280,6 +287,10 @@ class LinkedInFlow(GoogleFlow):
         """
         if not _is_valid(code):
             return None
+        if not _is_valid(redirect_uri):
+            raise ValueError('redirect_uri must be a non-empty string.')
+        if not _is_valid(state):
+            raise ValueError('state must be a non-empty string.')
 
         payload = urllib.urlencode({
             'client_id': self.client_id,
@@ -347,6 +358,11 @@ class FacebookFlow(LinkedInFlow):
         Returns:
             String URL to request a user's Facebook identity.
         """
+        if not _is_valid(redirect_uri):
+            raise ValueError('redirect_uri must be a non-empty string.')
+        if not _is_valid(state):
+            raise ValueError('state must be a non-empty string.')
+
         parameters = {
             'client_id': self.client_id,
             'redirect_uri': redirect_uri,
@@ -371,6 +387,10 @@ class FacebookFlow(LinkedInFlow):
         """
         if not _is_valid(code):
             return None
+        if not _is_valid(redirect_uri):
+            raise ValueError('redirect_uri must be a non-empty string.')
+        if not _is_valid(state):
+            raise ValueError('state must be a non-empty string.')
 
         parameters = {
             'client_id': self.client_id,
@@ -479,6 +499,11 @@ class GitHubFlow(LinkedInFlow):
         Returns:
             String URL to request a user's GitHub identity.
         """
+        if not _is_valid(redirect_uri):
+            raise ValueError('redirect_uri must be a non-empty string.')
+        if not _is_valid(state):
+            raise ValueError('state must be a non-empty string.')
+
         parameters = {
             'client_id': self.client_id,
             'redirect_uri': redirect_uri,
@@ -503,6 +528,10 @@ class GitHubFlow(LinkedInFlow):
         """
         if not _is_valid(code):
             return None
+        if not _is_valid(redirect_uri):
+            raise ValueError('redirect_uri must be a non-empty string.')
+        if not _is_valid(state):
+            raise ValueError('state must be a non-empty string.')
 
         payload = urllib.urlencode({
             'client_id': self.client_id,
@@ -741,18 +770,19 @@ class TwitterFlow(GoogleFlow):
             return _fetch_url(base_url, urllib.urlencode(parameters),
                               urlfetch.POST, headers)
 
-    def create_login_url(self, redirect_uri, state):
+    def create_login_url(self, redirect_uri, *args):
         """Return the URL to request a user's Twitter identity.
 
         Args:
             redirect_uri: String URI to the callback handler.
-            state: String unguessable random string to protect against
-                cross-site request forgery attacks.
         Returns:
             String URL to request a user's Twitter identity
             String request token which should match oauth_token on callback
             String token secret
         """
+        if not _is_valid(redirect_uri):
+            raise ValueError('redirect_uri must be a non-empty string.')
+
         parameters = {
             'oauth_callback': redirect_uri
         }
