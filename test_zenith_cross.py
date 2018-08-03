@@ -48,14 +48,29 @@ class HelperTest(test.BaseTestCase):
 
     def test_get_string_value(self):
         """Test getting the valid string value for a key in a dictionary."""
-        for value in [None, 42, '', []]:
+        for value in [None, 42, '', [], 'foobar', u'fo\u00f6b\u00e4r']:
             self.assertIsNone(zenith_cross._get_string_value(value, 'foobar'))
+            self.assertIsNone(zenith_cross._get_string_value({}, value))
+            self.assertIsNone(
+                zenith_cross._get_string_value({'foo': 'bar'}, value))
+            if zenith_cross._is_valid(value):
+                self.assertEqual(
+                    zenith_cross._get_string_value({'foo': value}, 'foo'),
+                    value)
+            else:
+                self.assertIsNone(
+                    zenith_cross._get_string_value({'foo': value}, 'foo'))
+            # Test default
             self.assertEqual(
-                zenith_cross._get_string_value(value, 'foobar', 'baz'), 'baz')
-            self.assertIsNone(zenith_cross._get_string_value(
-                {'foobar': value}, 'foobar'))
-            self.assertEqual(zenith_cross._get_string_value(
-                {'foobar': value}, 'foobar', 'baz'), 'baz')
+                zenith_cross._get_string_value(value, 'foobar', value), value)
+            self.assertEqual(
+                zenith_cross._get_string_value({}, value, value), value)
+            self.assertEqual(
+                zenith_cross._get_string_value({'foo': 'bar'}, value, value),
+                value)
+            self.assertEqual(
+                zenith_cross._get_string_value({'foo': value}, 'foo', value),
+                value)
 
         dictionary = {
             'foo': 42,
