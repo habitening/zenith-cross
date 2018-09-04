@@ -10,6 +10,7 @@ import webapp2
 from webapp2_extras import securecookie
 import webtest
 
+import config
 import main
 import models
 import test
@@ -113,16 +114,19 @@ class LoginTest(_WSGITestCase):
         """Test incorrect request methods."""
         response = self.app.put(self.url, status=405)
         self.assertEqual(response.status_int, 405)
+        self.assertNotIn('Set-Cookie', response.headers)
         self.assertEqual(models.JSONSession.query().count(), 0)
 
         response = self.app.delete(self.url, status=405)
         self.assertEqual(response.status_int, 405)
+        self.assertNotIn('Set-Cookie', response.headers)
         self.assertEqual(models.JSONSession.query().count(), 0)
 
     def test_login(self):
         """Test the login page."""
         response = self.app.get(self.url)
         self.assertEqual(response.status_int, 200)
+        self.assertNotIn('Set-Cookie', response.headers)
         self.assertEqual(models.JSONSession.query().count(), 0)
         response = response.form.submit()
         self.assertEqual(models.JSONSession.query().count(), 0)
@@ -133,6 +137,7 @@ class LoginTest(_WSGITestCase):
         for provider, redirect in self.provider_map.iteritems():
             response = self.app.get(self.url)
             self.assertEqual(response.status_int, 200)
+            self.assertNotIn('Set-Cookie', response.headers)
             self.assertEqual(models.JSONSession.query().count(), 0)
             response = response.form.submit('provider:' + provider)
             self.assertEqual(response.status_int, 302)
@@ -224,14 +229,17 @@ class _CallbackTestCase(_WSGITestCase):
         """Test incorrect request methods."""
         response = self.app.post(self.url, status=405)
         self.assertEqual(response.status_int, 405)
+        self.assertNotIn('Set-Cookie', response.headers)
         self.assertEqual(models.JSONSession.query().count(), 0)
 
         response = self.app.put(self.url, status=405)
         self.assertEqual(response.status_int, 405)
+        self.assertNotIn('Set-Cookie', response.headers)
         self.assertEqual(models.JSONSession.query().count(), 0)
 
         response = self.app.delete(self.url, status=405)
         self.assertEqual(response.status_int, 405)
+        self.assertNotIn('Set-Cookie', response.headers)
         self.assertEqual(models.JSONSession.query().count(), 0)
 
     def test_no_login(self):
@@ -261,7 +269,7 @@ class LogoutTest(_CallbackTestCase):
     def test_login(self):
         """Test logging out when logged in."""
         session = models.JSONSession._create({
-            'hash': 'foo',
+            config.HASH_KEY: 'foo',
             'state': 'bar'
         })
         self.set_session_ID(session.key.string_id())
@@ -292,7 +300,7 @@ class GoogleTest(_CallbackTestCase):
         expected_hash = flow._hash_user_id('test')
         session = models.JSONSession.query().get()
         self.assertEqual(session.data, {
-            'hash': expected_hash
+            config.HASH_KEY: expected_hash
         })
         self.assertEqual(response.status_int, 302)
         self.assertTrue(response.location.endswith(self.uri_for('private')))
@@ -429,7 +437,7 @@ class FrontendTest(_WSGITestCase):
 
         # Simulate logging in with a session
         session = models.JSONSession._create({
-            'hash': 'foo',
+            config.HASH_KEY: 'foo',
             'state': 'bar'
         })
         self.set_session_ID(session.key.string_id())
@@ -438,7 +446,7 @@ class FrontendTest(_WSGITestCase):
         self.assertIn('<dd>foo</dd>', response.body)
         self.assertIn('<dd>bar</dd>', response.body)
 
-        # Test missing "hash" key is the same as not logged in
+        # Test missing config.HASH_KEY is the same as not logged in
         session.data = {
             'state': 'bar'
         }
@@ -461,16 +469,16 @@ class FrontendTest(_WSGITestCase):
         """Test the private page with multiple different sessions."""
         sessions = [
             models.JSONSession._create({
-                'hash': 'foo',
+                config.HASH_KEY: 'foo',
                 'state': 'bar'
             }),
             models.JSONSession._create({
-                'hash': 'tic',
+                config.HASH_KEY: 'tic',
                 'state': 'tac',
                 'user_id': 'toe'
             }),
             models.JSONSession._create({
-                'hash': 'Rock',
+                config.HASH_KEY: 'Rock',
                 'state': 'Paper',
                 'user_id': 'Scissors'
             })]

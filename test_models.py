@@ -3,6 +3,7 @@
 from webapp2_extras import security
 from webapp2_extras import sessions
 
+import config
 import models
 import test
 
@@ -387,17 +388,17 @@ class JSONSessionFactoryTest(test.BaseTestCase):
         self.assertEqual(response.delete_cookie_count, 0)
 
     def test_save_session_logout(self):
-        """Test saving a session with the special "_logout" key."""
+        """Test saving a session with the special config.LOGOUT_KEY key."""
         factory = models.JSONSessionFactory('factory', DummyStore())
         response = DummyResponse()
 
         # Test "_logout" without a JSONSession in datastore
         factory.session = sessions.SessionDict(factory, new=True)
-        factory.session['_logout'] = True
+        factory.session[config.LOGOUT_KEY] = True
         self.assertIsNone(factory.sid)
         self.assertTrue(factory.session.new)
         self.assertTrue(factory.session.modified)
-        self.assertEqual(dict(factory.session), {'_logout': True})
+        self.assertEqual(dict(factory.session), {config.LOGOUT_KEY: True})
         factory.save_session(response)
         self.assertEqual(models.JSONSession.query().count(), 0)
         self.assertEqual(response.set_cookie_count, 0)
@@ -407,27 +408,26 @@ class JSONSessionFactoryTest(test.BaseTestCase):
         response.reset()
         foobar_session = models.JSONSession._create({'foo': 'bar'})
         factory.session = factory._get_by_sid(foobar_session.key.string_id())
-        factory.session['_logout'] = True
+        factory.session[config.LOGOUT_KEY] = True
         self.assertEqual(factory.sid, foobar_session.key.string_id())
         self.assertFalse(factory.session.new)
         self.assertTrue(factory.session.modified)
         self.assertEqual(dict(factory.session), {'foo': 'bar',
-                                                 '_logout': True})
+                                                 config.LOGOUT_KEY: True})
         self.assertEqual(models.JSONSession.query().count(), 1)
         factory.save_session(response)
         self.assertEqual(models.JSONSession.query().count(), 0)
         self.assertEqual(response.set_cookie_count, 0)
         self.assertEqual(response.delete_cookie_count, 1)
 
-        # Test "_logout" accidentally saved to datastore
-        # This is not possible normally because "_logout" is intercepted
+        # Test session with config.LOGOUT_KEY accidentally saved to datastore
         response.reset()
-        logout_session = models.JSONSession._create({'_logout': True})
+        logout_session = models.JSONSession._create({config.LOGOUT_KEY: True})
         factory.session = factory._get_by_sid(logout_session.key.string_id())
         self.assertEqual(factory.sid, logout_session.key.string_id())
         self.assertFalse(factory.session.new)
         self.assertFalse(factory.session.modified)
-        self.assertEqual(dict(factory.session), {'_logout': True})
+        self.assertEqual(dict(factory.session), {config.LOGOUT_KEY: True})
         self.assertEqual(models.JSONSession.query().count(), 1)
         factory.save_session(response)
         self.assertEqual(models.JSONSession.query().count(), 0)

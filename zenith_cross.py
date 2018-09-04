@@ -19,6 +19,7 @@ from webapp2_extras import security
 import yaml
 
 import base_handler
+import config
 
 def _fetch_url(url, payload=None, method=urlfetch.GET, headers={}, deadline=5):
     """Return the response from fetching url or None.
@@ -930,7 +931,7 @@ def _parse_config(path):
         else:
             # Unimplemented or unrecognized identity provider
             continue
-        if flow is not None:
+        if isinstance(flow, GoogleFlow):
             provider_map[flow.get_name()] = flow
 
     return provider_map, secret_key
@@ -955,7 +956,7 @@ _PROVIDER_MAP, SECRET_KEY = _parse_config(_PATH_TO_CONFIG)
 class LogoutHandler(base_handler.BaseHandler):
     def get(self):
         """Discard the session."""
-        self.session['_logout'] = True
+        self.session[config.LOGOUT_KEY] = True
         return self.after_logout()
 
 class LoginHandler(base_handler.BaseHandler):
@@ -1041,7 +1042,7 @@ class LinkedInCallback(base_handler.BaseHandler):
         hashed_user_id = flow.get_user_id(token)
         if _is_valid(hashed_user_id):
             self.session['access_token'] = token
-            self.session['hash'] = hashed_user_id
+            self.session[config.HASH_KEY] = hashed_user_id
             return self.after_login()
 
         # If login was canceled or failed
@@ -1091,7 +1092,7 @@ class GoogleCallback(base_handler.BaseHandler):
 
         hashed_user_id = flow.get_user_id()
         if _is_valid(hashed_user_id):
-            self.session['hash'] = hashed_user_id
+            self.session[config.HASH_KEY] = hashed_user_id
             return self.after_login()
 
         # If login was canceled or failed
@@ -1132,7 +1133,7 @@ class TwitterCallback(base_handler.BaseHandler):
         if _is_valid(hashed_user_id):
             self.session['access_token'] = access_token
             self.session['access_token_secret'] = access_secret
-            self.session['hash'] = hashed_user_id
+            self.session[config.HASH_KEY] = hashed_user_id
             return self.after_login()
 
         # If login was canceled or failed

@@ -7,6 +7,8 @@ from google.appengine.ext import ndb
 from webapp2_extras import security
 from webapp2_extras import sessions
 
+import config
+
 class JSONSession(ndb.Model):
 
     """Model to store session data in a JSON property.
@@ -161,13 +163,14 @@ class JSONSessionFactory(sessions.CustomBackendSessionFactory):
     def save_session(self, response):
         """Save the session and write the session ID to a secure cookie.
 
-        If the special key "_logout" is found in the session, then the cookie
-        is deleted. This implementation has the least impact on webapp2.
+        If config.LOGOUT_KEY is found in the session, then the cookie and the
+        session are deleted. This implementation has the least impact on
+        webapp2.
         """
         if not isinstance(self.session, sessions.SessionDict):
             return
 
-        if '_logout' in self.session:
+        if config.LOGOUT_KEY in self.session:
             if self.session_model._is_valid_sid(self.sid):
                 key = ndb.Key(self.session_model, self.sid)
                 key.delete()

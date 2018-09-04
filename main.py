@@ -6,6 +6,7 @@ from webapp2_extras import security
 from webapp2_extras import sessions
 
 import base_handler
+import config
 import zenith_cross
 
 class HomeHandler(base_handler.BaseHandler):
@@ -37,7 +38,7 @@ class PrivateHandler(base_handler.BaseHandler):
             I prefer the onus of extending be on the subclass.
         """
         self.session_store = sessions.get_store(request=self.request)
-        if 'hash' not in self.session:
+        if config.HASH_KEY not in self.session:
             return self.redirect_to('login')
         try:
             # Bypass dispatch() in BaseHandler and call the version in its
@@ -49,7 +50,7 @@ class PrivateHandler(base_handler.BaseHandler):
     def get(self):
         """Show a private page only accessible by a logged in user."""
         values = {
-            'hash': self.session.get('hash'),
+            'hash': self.session.get(config.HASH_KEY),
             'state': self.session.get('state')
         }
         self.render_template('private.html', values)
