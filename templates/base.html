@@ -11,12 +11,14 @@
 <body>
 
 <header>
-<ul>
-  <li><a href="{{ reverse('home')|safe }}">Home</a></li>
-  <li><a href="{{ reverse('secret')|safe }}">Secret keys</a></li>
-  <li><a href="{{ reverse('login')|safe }}">Login</a></li>
-  <li><a href="{{ reverse('logout')|safe }}">Logout</a></li>
-</ul>
+<nav>
+  <ul>
+    <li><a href="{{ reverse('home')|safe }}" title="Back to the home page">Home</a></li>
+    <li><a href="{{ reverse('secret')|safe }}" title="List of randomly generated secret keys">Secret keys</a></li>
+    <li><a href="{{ reverse('login')|safe }}" title="Login using an identity provider">Login</a></li>
+    <li><a href="{{ reverse('logout')|safe }}" title="Logout of the current session">Logout</a></li>
+  </ul>
+</nav>
 </header>
 
 <main>

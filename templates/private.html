@@ -7,14 +7,14 @@
 
 <p>This is a private page only accessible if you are logged in.</p>
 
-<p>Below are some values from your session:</p>
+<section class="private">
+<h2>Session contents</h2>
 
 <dl>
-  <dt>hash</dt>
-  <dd>{{ hash }}</dd>
-  <dt>state</dt>
-  <dd>{{ state }}</dd>
-  <dt>user_id</dt>
-  <dd>{{ user_id }}</dd>
+{%- for key, value in session.iteritems() %}
+  <dt>{{ key }}</dt>
+  <dd>{{ value }}</dd>
+{%- endfor %}
 </dl>
+</section>
 {% endblock content %}

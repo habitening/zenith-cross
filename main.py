@@ -50,8 +50,7 @@ class PrivateHandler(base_handler.BaseHandler):
     def get(self):
         """Show a private page only accessible by a logged in user."""
         values = {
-            'hash': self.session.get(config.HASH_KEY),
-            'state': self.session.get('state')
+            'session': dict(self.session)
         }
         self.render_template('private.html', values)
 
