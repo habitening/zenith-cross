@@ -1,0 +1,67 @@
+/* Minimal CSS stylesheet to apply official colors to the identity provider buttons */
+body {
+  background-color: white;
+  color: black;
+}
+p.disclaimer {
+  background-color: #eee;
+  border-radius: 5px;
+  padding: 1em;
+}
+section.private {
+  background-color: lightpink;
+  background-image: repeating-linear-gradient(to bottom left, yellow, yellow 20px, black 2px, black 22px, blue 20px, blue 42px);
+  border: 2px solid black;
+  color: yellow;
+  font-weight: bold;
+  padding: 1em;
+}
+ul.provider {
+  list-style: none inside none;
+  margin: 0;
+  padding: 0;
+}
+li.provider {
+  margin: 1em;
+  text-align: center;
+}
+button.provider {
+  /* Turn off the native look and feel on Gecko based browsers */
+  -moz-appearance: none;
+  /* Turn off the native look and feel on WebKit based browsers */
+  -webkit-appearance: none;
+  /* Turn off the native look and feel on several different browsers */
+  background: none;
+
+  border: none;
+  border-radius: 5px;
+  box-shadow: 0.25em 0.25em 0.25em #ccc;
+  cursor: pointer;
+  font-weight: bold;
+  padding: 1em;
+  width: 100%;
+}
+/* Colors for the identity providers */
+button.provider.facebook {
+  /* The official Facebook blue */
+  background-color: #4267B2;
+  color: white;
+}
+button.provider.github {
+  background-color: black;
+  color: white;
+}
+button.provider.google {
+  background-color: white;
+  /* Gray border to define the boundary of the white button */
+  border: 1px solid #ccc;
+  color: black;
+}
+button.provider.linkedin {
+  background-color: #0077B5;
+  color: white;
+}
+button.provider.twitter {
+  background-color: #1B95E0;
+  color: white;
+}

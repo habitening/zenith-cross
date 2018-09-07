@@ -12,10 +12,10 @@ If you have cookies disabled, then you will not be able to log in.</p>
 <p>Please choose an identity provider:</p>
 
 <form id="login_form" name="login_form" action="" method="post">
-<ul class="login">
+<ul class="provider">
 {%- for provider in providers %}
-  <li class="login">
-    <button class="{{ provider|lower }} login" type="submit" name="provider:{{ provider|lower }}" value="{{ provider }}">
+  <li class="provider">
+    <button class="{{ provider|lower }} provider" type="submit" name="provider:{{ provider|lower }}" value="{{ provider }}">
       Login with {{ provider }}
     </button>
   </li>

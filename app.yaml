@@ -1,13 +1,21 @@
+# Replace application with your project name
 application: zenith-cross
+# Replace version with your version
 version: mark1
 runtime: python27
 api_version: 1
 threadsafe: true
 
 handlers:
+- url: /static
+  static_dir: static
+  secure: always
+
 # Default handler
 - url: /.*
   script: main.app
+# Always use HTTPS for encryption
+# Most identity providers require it any way
   secure: always
 
 libraries:
@@ -30,4 +38,4 @@ skip_files:
 - ^(.*/)?.*/RCS/.*$
 - ^(.*/)?\..*$
 # Skip the unit and integration tests
-- ^test.*\.py[co]$
+- ^test.*\.py[co]?$
