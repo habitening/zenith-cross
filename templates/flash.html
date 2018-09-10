@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+
+{% block title %}Flash messages{% endblock title %}
+
+{% block content %}
+<h1>{{ self.title() }}</h1>
+
+<p>Any flash messages would have been shown at the top.</p>
+
+<form id="flash_form" name="flash_form" action="" method="post">
+<input type="submit" value="Add flash message">
+</form>
+{% endblock content %}

@@ -3,6 +3,13 @@ body {
   background-color: white;
   color: black;
 }
+/* Show flash messages like the Flask tutorial example */
+div.flash {
+  background: #cae6f6;
+  border: 1px solid #377ba8;
+  margin: 1em 0;
+  padding: 1em;
+}
 p.disclaimer {
   background-color: #eee;
   border-radius: 5px;

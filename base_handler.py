@@ -26,7 +26,7 @@ class BaseHandler(webapp2.RequestHandler):
         """Add a session store to the handler."""
         self.session_store = sessions.get_store(request=self.request)
         try:
-            super(BaseHandler, self).dispatch()
+            return super(BaseHandler, self).dispatch()
         finally:
             self.session_store.save_sessions(self.response)
 
@@ -61,28 +61,31 @@ class BaseHandler(webapp2.RequestHandler):
             self.jinja2.render_template(template_name, **values))
 
     @webapp2.cached_property
+    def flash(self):
+        """Return a secure cookie session for flash messages.
+
+        Django and Flask have a similar implementation. If you do not use flash
+        messages, then no secure cookie is written.
+
+            # To add a flash message
+            self.flash.add_flash('Foobar!')
+            # To get all flash messages
+            messages = [value for value, level in self.flash.get_flashes()]
+
+        It is fine that the flash messages are visible in a secure cookie
+        because the user will see them in the next response any way.
+        """
+        # Need to supply a name to avoid using the same default cookie name
+        return self.session_store.get_session(
+            name='gordon', backend='securecookie')
+
+    @webapp2.cached_property
     def session(self):
         """Return a datastore backed session for the default cookie name.
 
         DO NOT use this session for flash messages because it is kept in the
         datastore and adding flash messages will incur expensive datastore
-        writes! Instead, create a separate session for flash messages backed by
-        a secure cookie:
-
-            @webapp2.cached_property
-            def flash(self):
-                # Need to supply a name to avoid using the default cookie name
-                return self.session_store.get_session(
-                    name='flash', backend='securecookie')
-
-        Django and Flask have a similar implementation. Then add your flash
-        messages to this separate session:
-
-            self.flash.add_flash('Foobar!')
-            messages = self.flash.get_flashes()
-
-        It is fine that the flash messages are visible in a secure cookie
-        because the user will see them in the next response any way.
+        writes! There is a separate session for flash messages.
         """
         return self.session_store.get_session(
             factory=models.JSONSessionFactory)

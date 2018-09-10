@@ -14,6 +14,35 @@ class HomeHandler(base_handler.BaseHandler):
         """Explain what this application does."""
         self.render_template('home.html')
 
+class FlashHandler(base_handler.BaseHandler):
+
+    """Handler to demonstrate how to use flash messages."""
+
+    def get(self):
+        """Show all the flash messages."""
+        values = {
+            'messages': [value for value, level in self.flash.get_flashes()]
+        }
+        self.render_template('flash.html', values)
+
+    def post(self):
+        """Add a flash message to the session."""
+        self.flash.add_flash('Duck Dodgers in the 24th and a half century!')
+        return self.redirect_to('flash')
+
+class SecretHandler(base_handler.BaseHandler):
+    def get(self):
+        """Show a page of random secret keys."""
+        values = {
+            'alphanumerics': [security.generate_random_string(
+                length=64, pool=security.ALPHANUMERIC)
+                              for i in xrange(16)],
+            'printables': [security.generate_random_string(
+                length=64, pool=security.ASCII_PRINTABLE)
+                           for i in xrange(16)]
+        }
+        self.render_template('secret.html', values)
+
 class PrivateHandler(base_handler.BaseHandler):
 
     """Handler that requires a logged in user.
@@ -23,6 +52,9 @@ class PrivateHandler(base_handler.BaseHandler):
 
     def dispatch(self):
         """Override dispatch to check for a logged in user.
+
+        We cannot rely on the "login: required" directive in app.yaml because
+        that only works with Google as an identity provider.
 
         We cannot simply extend dispatch() in BaseHandler because self.session
         requires self.session_store be set first.
@@ -43,7 +75,7 @@ class PrivateHandler(base_handler.BaseHandler):
         try:
             # Bypass dispatch() in BaseHandler and call the version in its
             # parent class
-            super(base_handler.BaseHandler, self).dispatch()
+            return super(base_handler.BaseHandler, self).dispatch()
         finally:
             self.session_store.save_sessions(self.response)
 
@@ -53,19 +85,6 @@ class PrivateHandler(base_handler.BaseHandler):
             'session': dict(self.session)
         }
         self.render_template('private.html', values)
-
-class SecretHandler(base_handler.BaseHandler):
-    def get(self):
-        """Show a page of random secret keys."""
-        values = {
-            'alphanumerics': [security.generate_random_string(
-                length=64, pool=security.ALPHANUMERIC)
-                              for i in xrange(16)],
-            'printables': [security.generate_random_string(
-                length=64, pool=security.ASCII_PRINTABLE)
-                           for i in xrange(16)]
-        }
-        self.render_template('secret.html', values)
 
 
 _config = {
@@ -112,6 +131,8 @@ app = webapp2.WSGIApplication([
     ]),
     webapp2.Route(r'/logout', handler=zenith_cross.LogoutHandler,
                   name='logout'),
+    routes.RedirectRoute(r'/flash/', handler=FlashHandler,
+                         strict_slash=True, name='flash'),
     routes.RedirectRoute(r'/private/', handler=PrivateHandler,
                          strict_slash=True, name='private'),
     routes.RedirectRoute(r'/secret/', handler=SecretHandler,

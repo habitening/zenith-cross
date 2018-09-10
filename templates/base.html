@@ -10,11 +10,15 @@
 </head>
 
 <body>
+{%- for message in messages %}
+<div class="flash">{{ message }}</div>
+{%- endfor %}
 
 <header>
 <nav>
   <ul>
     <li><a href="{{ reverse('home')|safe }}" title="Back to the home page">Home</a></li>
+    <li><a href="{{ reverse('flash')|safe }}" title="Show flash messages">Flash messages</a></li>
     <li><a href="{{ reverse('secret')|safe }}" title="List of randomly generated secret keys">Secret keys</a></li>
     <li><a href="{{ reverse('login')|safe }}" title="Login using an identity provider">Login</a></li>
     <li><a href="{{ reverse('logout')|safe }}" title="Logout of the current session">Logout</a></li>
