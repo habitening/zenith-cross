@@ -949,7 +949,7 @@ else:
     """String path to the production YAML configuration file."""
 
 _PROVIDER_MAP, SECRET_KEY = _parse_config(_PATH_TO_CONFIG)
-"""Dictionary of identity providers as GoogleFlow subclasses."""
+"""Dictionary of identity providers as GoogleFlow objects."""
 """String secret key for webapp2.sessions."""
 
 

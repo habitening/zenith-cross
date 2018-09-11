@@ -31,6 +31,7 @@ class HelperTest(test.BaseTestCase):
         result = zenith_cross._parse_JSON_response(response)
         self.assertIsNotNone(result)
         self.assertIsInstance(result, list)
+        self.assertGreater(len(result), 0)
 
     def test_parse_JSON_response(self):
         """Test parsing a JSON response."""

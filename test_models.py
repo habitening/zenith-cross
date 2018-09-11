@@ -74,6 +74,10 @@ class JSONSessionTest(test.BaseTestCase):
         self.assertEqual(len(sessions), 2)
         sessions.sort(key=lambda s: s.created)
 
+        models.JSONSession.delete_created_before(sessions[0].created)
+        self.assertEqual(models.JSONSession.query().count(), 2)
+        for session in sessions:
+            self.assertIsInstance(session.key.get(), models.JSONSession)
         models.JSONSession.delete_created_before(sessions[-1].created)
         self.assertEqual(models.JSONSession.query().count(), 1)
         self.assertIsNone(sessions[0].key.get())
@@ -90,6 +94,10 @@ class JSONSessionTest(test.BaseTestCase):
         self.assertEqual(len(sessions), 2)
         sessions.sort(key=lambda s: s.modified)
 
+        models.JSONSession.delete_modified_before(sessions[0].modified)
+        self.assertEqual(models.JSONSession.query().count(), 2)
+        for session in sessions:
+            self.assertIsInstance(session.key.get(), models.JSONSession)
         models.JSONSession.delete_modified_before(sessions[-1].modified)
         self.assertEqual(models.JSONSession.query().count(), 1)
         self.assertIsNone(sessions[0].key.get())
@@ -392,7 +400,7 @@ class JSONSessionFactoryTest(test.BaseTestCase):
         factory = models.JSONSessionFactory('factory', DummyStore())
         response = DummyResponse()
 
-        # Test "_logout" without a JSONSession in datastore
+        # Test config.LOGOUT_KEY without a JSONSession in datastore
         factory.session = sessions.SessionDict(factory, new=True)
         factory.session[config.LOGOUT_KEY] = True
         self.assertIsNone(factory.sid)
@@ -404,7 +412,7 @@ class JSONSessionFactoryTest(test.BaseTestCase):
         self.assertEqual(response.set_cookie_count, 0)
         self.assertEqual(response.delete_cookie_count, 1)
 
-        # Test "_logout" with a JSONSession in datastore
+        # Test config.LOGOUT_KEY with a JSONSession in datastore
         response.reset()
         foobar_session = models.JSONSession._create({'foo': 'bar'})
         factory.session = factory._get_by_sid(foobar_session.key.string_id())
