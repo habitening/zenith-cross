@@ -92,6 +92,64 @@ class SanityTest(_WSGITestCase):
             ('private', '/private/')]:
             self.assertEqual(self.uri_for(value), expected)
 
+class FlashTest(_WSGITestCase):
+    def setUp(self):
+        super(FlashTest, self).setUp()
+
+        self.url = self.uri_for('flash')
+        """String URL for the flash route."""
+
+        self.assertEqual(models.JSONSession.query().count(), 0)
+
+    def test_bad_methods(self):
+        """Test incorrect request methods."""
+        response = self.app.put(self.url, status=405)
+        self.assertEqual(response.status_int, 405)
+        self.assertNotIn('Set-Cookie', response.headers)
+        self.assertEqual(models.JSONSession.query().count(), 0)
+
+        response = self.app.delete(self.url, status=405)
+        self.assertEqual(response.status_int, 405)
+        self.assertNotIn('Set-Cookie', response.headers)
+        self.assertEqual(models.JSONSession.query().count(), 0)
+
+    def test_form(self):
+        """Test flash messages via the form."""
+        response = self.app.get(self.url)
+        self.assertEqual(response.status_int, 200)
+        self.assertNotIn('Duck Dodgers', response.body)
+        response = response.form.submit()
+        self.assertEqual(models.JSONSession.query().count(), 0)
+        self.assertEqual(response.status_int, 302)
+        self.assertTrue(response.location.endswith(self.url))
+        self.assertIn('Set-Cookie', response.headers)
+        self.assertTrue(response.headers['Set-Cookie'].startswith('gordon='))
+        cookie_map = self.app.cookies
+        self.assertEqual(len(cookie_map), 1)
+        self.assertIn('gordon', cookie_map)
+
+        self.app.set_cookie('gordon', cookie_map['gordon'])
+        response = self.app.get(self.url)
+        self.assertEqual(response.status_int, 200)
+        self.assertIn('Duck Dodgers', response.body)
+
+    def test_post(self):
+        """Test the POST method adds a flash message."""
+        response = self.app.post(self.url)
+        self.assertEqual(models.JSONSession.query().count(), 0)
+        self.assertEqual(response.status_int, 302)
+        self.assertTrue(response.location.endswith(self.url))
+        self.assertIn('Set-Cookie', response.headers)
+        self.assertTrue(response.headers['Set-Cookie'].startswith('gordon='))
+        cookie_map = self.app.cookies
+        self.assertEqual(len(cookie_map), 1)
+        self.assertIn('gordon', cookie_map)
+
+        self.app.set_cookie('gordon', cookie_map['gordon'])
+        response = self.app.get(self.url)
+        self.assertEqual(response.status_int, 200)
+        self.assertIn('Duck Dodgers', response.body)
+
 class LoginTest(_WSGITestCase):
     def setUp(self):
         super(LoginTest, self).setUp()
@@ -318,6 +376,7 @@ class GoogleTest(_CallbackTestCase):
         response = response.follow()
         self.assertEqual(models.JSONSession.query().count(), 1)
         self.assertEqual(response.status_int, 200)
+        self.assertIn('<dt>{0}</dt>'.format(config.HASH_KEY), response.body)
         self.assertIn('<dd>{0}</dd>'.format(expected_hash), response.body)
         cookie_map = self.app.cookies
         self.assertEqual(len(cookie_map), 1)
@@ -443,8 +502,9 @@ class FrontendTest(_WSGITestCase):
         self.set_session_ID(session.key.string_id())
         response = self.app.get(url)
         self.assertEqual(response.status_int, 200)
-        self.assertIn('<dd>foo</dd>', response.body)
-        self.assertIn('<dd>bar</dd>', response.body)
+        for key, value in session.data.iteritems():
+            self.assertIn('<dt>{0}</dt>'.format(key), response.body)
+            self.assertIn('<dd>{0}</dd>'.format(value), response.body)
 
         # Test missing config.HASH_KEY is the same as not logged in
         session.data = {
@@ -487,12 +547,12 @@ class FrontendTest(_WSGITestCase):
             response = self.app.get(self.uri_for('private'))
             self.assertEqual(response.status_int, 200)
             for key, value in session.data.iteritems():
-                if key != 'user_id':
-                    self.assertIn('<dd>{0}</dd>'.format(value), response.body)
+                self.assertIn('<dt>{0}</dt>'.format(key), response.body)
+                self.assertIn('<dd>{0}</dd>'.format(value), response.body)
             # Test none of the other sessions leaked through
             for s in sessions:
                 if s.key.string_id() == session.key.string_id():
                     continue
-                for key, value in s.data.iteritems():
+                for value in s.data.itervalues():
                     self.assertNotIn('<dd>{0}</dd>'.format(value),
                                      response.body)
