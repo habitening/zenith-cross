@@ -6,6 +6,8 @@ The easiest way is to install it in a virtualenv environment and then run
 these tests through the python interpreter in that environment.
 """
 
+import datetime
+
 import webapp2
 from webapp2_extras import securecookie
 import webtest
@@ -101,6 +103,14 @@ class FlashTest(_WSGITestCase):
 
         self.assertEqual(models.JSONSession.query().count(), 0)
 
+    def test_strict_slash(self):
+        """Test the strict slash at the end of the URL."""
+        response = self.app.get(self.url[:-1])
+        self.assertEqual(response.status_int, 301)
+        self.assertTrue(response.location.endswith(self.url))
+        self.assertNotIn('Set-Cookie', response.headers)
+        self.assertEqual(models.JSONSession.query().count(), 0)
+
     def test_bad_methods(self):
         """Test incorrect request methods."""
         response = self.app.put(self.url, status=405)
@@ -149,6 +159,96 @@ class FlashTest(_WSGITestCase):
         response = self.app.get(self.url)
         self.assertEqual(response.status_int, 200)
         self.assertIn('Duck Dodgers', response.body)
+
+class CleanTest(_WSGITestCase):
+    def setUp(self):
+        super(CleanTest, self).setUp()
+
+        self.url = self.uri_for('clean')
+        """String URL for the clean route."""
+
+        self.sessions = [
+            models.JSONSession._create({
+                config.HASH_KEY: 'foo',
+                'state': 'bar'
+            }),
+            models.JSONSession._create({
+                config.HASH_KEY: 'tic',
+                'state': 'tac',
+                'user_id': 'toe'
+            }),
+            models.JSONSession._create({
+                config.HASH_KEY: 'Rock',
+                'state': 'Paper',
+                'user_id': 'Scissors'
+            })
+        ]
+        """List of JSONSession entities to use in the tests."""
+        self.sessions[0].created = datetime.datetime.utcnow(
+            ) - datetime.timedelta(minutes=90)
+        self.sessions[0].put()
+        self.sessions[1].created = datetime.datetime.utcnow(
+            ) - datetime.timedelta(minutes=60)
+        self.sessions[1].put()
+        self.sessions[2].created = datetime.datetime.utcnow(
+            ) - datetime.timedelta(minutes=30)
+        self.sessions[2].put()
+
+        self.assertEqual(models.JSONSession.query().count(), 3)
+
+    def test_strict_slash(self):
+        """Test the strict slash at the end of the URL."""
+        response = self.app.get(self.url[:-1])
+        self.assertEqual(response.status_int, 301)
+        self.assertTrue(response.location.endswith(self.url))
+        self.assertEqual(models.JSONSession.query().count(), 3)
+
+    def test_bad_headers(self):
+        """Test incorrect request headers."""
+        # Test missing headers
+        response = self.app.get(self.url)
+        self.assertEqual(response.status_int, 200)
+        self.assertEqual(models.JSONSession.query().count(), 3)
+
+        response = self.app.get(self.url,
+                                headers={'X-Appengine-Cron': 'true'})
+        self.assertEqual(response.status_int, 200)
+        self.assertEqual(models.JSONSession.query().count(), 3)
+
+        response = self.app.get(self.url,
+                                extra_environ={'REMOTE_ADDR': '0.1.0.1'})
+        self.assertEqual(response.status_int, 200)
+        self.assertEqual(models.JSONSession.query().count(), 3)
+
+        response = self.app.get(self.url,
+                                headers={'X-Appengine-Cron': 'true'},
+                                extra_environ={'REMOTE_ADDR': '0.1.0.2'})
+        self.assertEqual(response.status_int, 200)
+        self.assertEqual(models.JSONSession.query().count(), 3)
+
+    def test_bad_methods(self):
+        """Test incorrect request methods."""
+        response = self.app.post(self.url, status=405)
+        self.assertEqual(response.status_int, 405)
+        self.assertEqual(models.JSONSession.query().count(), 3)
+
+        response = self.app.put(self.url, status=405)
+        self.assertEqual(response.status_int, 405)
+        self.assertEqual(models.JSONSession.query().count(), 3)
+
+        response = self.app.delete(self.url, status=405)
+        self.assertEqual(response.status_int, 405)
+        self.assertEqual(models.JSONSession.query().count(), 3)
+
+    def test_success(self):
+        """Test a successful invocation of the scheduled task."""
+        response = self.app.get(self.url, headers={'X-Appengine-Cron': 'true'},
+                                extra_environ={'REMOTE_ADDR': '0.1.0.1'})
+        self.assertEqual(response.status_int, 200)
+        self.assertEqual(models.JSONSession.query().count(), 1)
+        self.assertIsNone(self.sessions[0].key.get())
+        self.assertIsNone(self.sessions[1].key.get())
+        self.assertIsInstance(self.sessions[2].key.get(), models.JSONSession)
 
 class LoginTest(_WSGITestCase):
     def setUp(self):
@@ -541,7 +641,8 @@ class FrontendTest(_WSGITestCase):
                 config.HASH_KEY: 'Rock',
                 'state': 'Paper',
                 'user_id': 'Scissors'
-            })]
+            })
+        ]
         for session in sessions:
             self.set_session_ID(session.key.string_id())
             response = self.app.get(self.uri_for('private'))

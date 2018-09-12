@@ -11,6 +11,13 @@ handlers:
   static_dir: static
   secure: always
 
+# Scheduled task routes
+- url: /cron/.*
+  script: main.app
+# admin allows scheduled task requests
+  login: admin
+  secure: always
+
 # Default handler
 - url: /.*
   script: main.app

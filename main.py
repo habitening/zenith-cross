@@ -1,5 +1,8 @@
 """The WSGI application and the handlers in the frontend module."""
 
+import datetime
+import logging
+
 import webapp2
 from webapp2_extras import routes
 from webapp2_extras import security
@@ -7,6 +10,7 @@ from webapp2_extras import sessions
 
 import base_handler
 import config
+import models
 import zenith_cross
 
 class HomeHandler(base_handler.BaseHandler):
@@ -42,6 +46,48 @@ class SecretHandler(base_handler.BaseHandler):
                            for i in xrange(16)]
         }
         self.render_template('secret.html', values)
+
+class CleanHandler(webapp2.RequestHandler):
+    def is_valid_request(self):
+        """Return whether the HTTP request is valid (from App Engine).
+
+        Requests from the Cron Service will also contain a HTTP header:
+            X-Appengine-Cron: true
+
+        The X-Appengine-Cron header is set internally by Google App Engine. If
+        your request handler finds this header it can trust that the request is
+        a cron request. If the header is present in an external user request to
+        your app, it is stripped, except for requests from logged in
+        administrators of the application, who are allowed to set the header
+        for testing purposes.
+
+        Google App Engine issues Cron requests from the IP address 0.1.0.1.
+
+        Returns:
+            True if the HTTP request is valid. False otherwise.
+        """
+        if 'X-Appengine-Cron' not in self.request.headers:
+            logging.warning('X-Appengine-Cron not in headers.')
+            return False
+        address = self.request.remote_addr
+        if not isinstance(address, basestring):
+            return False
+        address = address.strip()
+        if address != '0.1.0.1':
+            logging.warning(
+                'Remote address is incorrect: {0} vs 0.1.0.1'.format(
+                    address.encode('ascii', 'ignore')))
+            return False
+        return True
+
+    def get(self):
+        """Delete sessions created over an hour ago."""
+        if not self.is_valid_request():
+            return
+
+        # Adjust cutoff based on the scheduled task interval
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=1)
+        models.JSONSession.delete_created_before(cutoff)
 
 class PrivateHandler(base_handler.BaseHandler):
 
@@ -113,6 +159,10 @@ _config = {
 """Dictionary webapp2 configuration."""
 
 app = webapp2.WSGIApplication([
+    routes.PathPrefixRoute(r'/cron', [
+        routes.RedirectRoute(r'/clean/', handler=CleanHandler,
+                             strict_slash=True, name='clean'),
+    ]),
     routes.PathPrefixRoute(r'/login', [
         # The redirect_uri for each identity provider
         # Comment out or remove as needed

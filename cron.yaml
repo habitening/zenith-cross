@@ -1,0 +1,4 @@
+cron:
+- description: "Delete sessions more than an hour old."
+  url: /cron/clean/
+  schedule: every 1 hours synchronized
