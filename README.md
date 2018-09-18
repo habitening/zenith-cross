@@ -1,12 +1,12 @@
 zenith-cross
-============
+############
 
 zenith-cross is the foundation for an application that uses federated
 login on Google App Engine. It contains webapp2 handlers and helpers
-that use identity providers like Facebook, GitHub, Google, LinkedIn and Twitter
-to authenticate a user. Basically, it is a tested implementation of the OAuth
-dance. Despite the chorus of people saying it is trivial, it actually takes
-some work to get right.
+that use identity providers like Facebook, GitHub, Google, LinkedIn, and
+Twitter to authenticate a user. Basically, it is a tested implementation of the
+OAuth dance. Despite the chorus of people saying it is trivial, it actually
+takes some work to get right.
 
 When Google stopped supporting federated login on App Engine, it left Google as
 the only identity provider for App Engine. If you want to use federated login,
@@ -44,6 +44,7 @@ precautions to make sure this would never happen like
 - making sure passwords are never stored in plain text
 - making sure passwords never leak into your logs
 - passwords are salted and hashed
+
 This may well be true
 - But are you sure everybody else is doing this?
 - Are you sure you don't have a disgruntled or a financially motivated employee
@@ -58,7 +59,8 @@ funded. It is a win-win for both sides of login.
 Dependencies
 ------------
 
-zenith-cross only requires the included third-party libraries in App Engine,
+zenith-cross only requires `the included third-party libraries in App Engine
+<https://cloud.google.com/appengine/docs/standard/python/tools/built-in-libraries-27>`_,
 in particular
 - jinja2
 - webob
