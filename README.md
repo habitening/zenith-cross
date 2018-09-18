@@ -1,5 +1,4 @@
-zenith-cross
-############
+# zenith-cross
 
 zenith-cross is the foundation for an application that uses federated
 login on Google App Engine. It contains webapp2 handlers and helpers
@@ -20,8 +19,7 @@ If you are looking to store your own username/password, **THIS IS NOT**
 the code for you. But before you move on, please let me try to convince you
 to use federated login.
 
-Why no username/password?
--------------------------
+## Why no username/password?
 
 There are too many username/password systems in the world. Each of these sites
 has one because they think they are going to be the next Facebook or Twitter.
@@ -56,11 +54,10 @@ provider. This reduces the burden of login to them. And you get to outsource
 protecting passwords to the identity providers who are bigger and better
 funded. It is a win-win for both sides of login.
 
-Dependencies
-------------
+## Dependencies
 
-zenith-cross only requires `the included third-party libraries in App Engine
-<https://cloud.google.com/appengine/docs/standard/python/tools/built-in-libraries-27>`_,
+zenith-cross only requires [the included third-party libraries in App Engine]
+(https://cloud.google.com/appengine/docs/standard/python/tools/built-in-libraries-27),
 in particular
 - jinja2
 - webob
